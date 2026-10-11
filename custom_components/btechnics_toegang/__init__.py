@@ -11,9 +11,12 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers.service import async_register_admin_service
 from homeassistant.helpers.typing import ConfigType
 
 from .api import deur_openen, registreer_views
+from .frontend import async_registreer_kaarten
+from .websocket import async_registreer_ws
 from .const import DOMAIN, MODI
 from .register import Register, ToegangFout
 
@@ -141,7 +144,9 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         reg.tablet_intrekken(tid)
         await _herlaad_entiteiten(hass)
 
-    reg_dienst = hass.services.async_register
+    def reg_dienst(domein, naam, fn, schema=None, supports_response=SupportsResponse.NONE):
+        # enkel beheerders: deze diensten beheren pincodes en deuren
+        async_register_admin_service(hass, domein, naam, fn, schema or vol.Schema({}), supports_response)
     reg_dienst(DOMAIN, "deur_toevoegen", deur_toevoegen,
                vol.Schema({vol.Required("naam"): cv.string, vol.Optional("open_entiteit"): cv.entity_id}),
                supports_response=SupportsResponse.OPTIONAL)
@@ -167,6 +172,8 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                vol.Schema({vol.Required("deur"): cv.string, vol.Optional("naam"): cv.string}),
                supports_response=SupportsResponse.OPTIONAL)
     reg_dienst(DOMAIN, "tablet_intrekken", tablet_intrekken, vol.Schema({vol.Required("tablet"): cv.string}))
+    async_registreer_ws(hass)
+    await async_registreer_kaarten(hass)
     return True
 
 

@@ -1,0 +1,45 @@
+import pytest
+from homeassistant.exceptions import Unauthorized
+from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+from custom_components.btechnics_toegang.const import DOMAIN
+
+
+@pytest.fixture
+async def opgezet(hass):
+    entry = MockConfigEntry(domain=DOMAIN, data={})
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    return hass
+
+
+async def test_ws_data(opgezet, hass_ws_client):
+    hass = opgezet
+    await hass.services.async_call(DOMAIN, "deur_toevoegen", {"naam": "Vergaderzaal"}, blocking=True)
+    await hass.services.async_call(DOMAIN, "persoon_toevoegen", {"naam": "Jan", "pincode": "4711", "deuren": ["Vergaderzaal"],
+                                                                 "schema": [{"dagen": [1, 2], "van": "08:00", "tot": "17:00"}]}, blocking=True)
+    ws = await hass_ws_client(hass)
+    await ws.send_json({"id": 1, "type": f"{DOMAIN}/data"})
+    r = await ws.receive_json()
+    assert r["success"]
+    d = r["result"]
+    assert d["deuren"][0]["naam"] == "Vergaderzaal"
+    assert d["personen"][0]["pin"] == "4711" and d["personen"][0]["schema"][0]["dagen"] == [1, 2]
+    assert d["tablets"] == [] and d["log"] == []
+
+
+async def test_diensten_enkel_beheerder(opgezet, hass_read_only_user):
+    from homeassistant.core import Context
+    hass = opgezet
+    with pytest.raises(Unauthorized):
+        await hass.services.async_call(DOMAIN, "deur_toevoegen", {"naam": "X"}, blocking=True,
+                                       context=Context(user_id=hass_read_only_user.id))
+
+
+async def test_ws_enkel_beheerder(opgezet, hass_ws_client, hass_read_only_access_token):
+    hass = opgezet
+    ws = await hass_ws_client(hass, hass_read_only_access_token)
+    await ws.send_json({"id": 1, "type": f"{DOMAIN}/data"})
+    r = await ws.receive_json()
+    assert not r["success"] and r["error"]["code"] == "unauthorized"

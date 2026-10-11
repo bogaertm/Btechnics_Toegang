@@ -11,7 +11,16 @@ Het contract tussen HA en de tablets staat in het afsprakendocument, schema 1.
 2. Btechnics Toegang installeren en Home Assistant herstarten.
 3. Instellingen, Apparaten en diensten, Integratie toevoegen, Btechnics Toegang.
 
-## Gebruik (Ontwikkelhulpmiddelen, Acties)
+## Dashboard
+
+Kaart `custom:btechnics-toegang` met `view: deuren`, `personen` of `logboek`. De kaart wordt automatisch geladen (geen resource toevoegen). Enkel beheerders.
+
+```yaml
+type: custom:btechnics-toegang
+view: personen
+```
+
+## Acties (Ontwikkelhulpmiddelen, Acties, enkel beheerders)
 
 | Actie | Wat |
 |---|---|
