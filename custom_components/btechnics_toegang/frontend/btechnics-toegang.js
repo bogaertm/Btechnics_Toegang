@@ -559,7 +559,14 @@ class BtxToegang extends HTMLElement {
   _wijzig() {}
 }
 
-if (!customElements.get("btechnics-toegang")) customElements.define("btechnics-toegang", BtxToegang);
+// Registreren, en opnieuw proberen als de frontend nadien een eigen kaartregister plaatst.
+function registreer() {
+  if (customElements.get("btechnics-toegang")) return;
+  try { customElements.define("btechnics-toegang", class extends BtxToegang {}); } catch (e) { /* al gekend */ }
+}
+registreer();
+for (const ms of [0, 500, 2000, 5000]) setTimeout(registreer, ms);
+window.addEventListener("location-changed", () => setTimeout(registreer, 0));
 window.customCards = window.customCards || [];
 if (!window.customCards.find((c) => c.type === "btechnics-toegang"))
   window.customCards.push({ type: "btechnics-toegang", name: "Btechnics Toegang", description: "Deuren, personen en logboek van de deurtablets (view: deuren, personen of logboek)." });
