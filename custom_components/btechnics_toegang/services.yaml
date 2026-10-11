@@ -1,0 +1,48 @@
+deur_toevoegen:
+  fields:
+    naam: {required: true, example: Vergaderzaal, selector: {text: {}}}
+    open_entiteit: {example: switch.relais_vergaderzaal, selector: {entity: {domain: [switch, script, lock, button, input_button, input_boolean]}}}
+deur_wijzigen:
+  fields:
+    deur: {required: true, example: Vergaderzaal, selector: {text: {}}}
+    naam: {selector: {text: {}}}
+    open_entiteit: {selector: {entity: {domain: [switch, script, lock, button, input_button, input_boolean]}}}
+deur_verwijderen:
+  fields:
+    deur: {required: true, selector: {text: {}}}
+deur_openen:
+  fields:
+    deur: {required: true, selector: {text: {}}}
+modus_zetten:
+  fields:
+    deur: {required: true, selector: {text: {}}}
+    modus: {required: true, selector: {select: {options: [open, afwezig, vergadering, niet_storen]}}}
+persoon_toevoegen:
+  fields:
+    naam: {required: true, example: Jan Peeters, selector: {text: {}}}
+    pincode: {example: "4711", selector: {text: {type: password}}}
+    deuren: {example: "[Vergaderzaal]", selector: {object: {}}}
+    van: {selector: {date: {}}}
+    tot: {selector: {date: {}}}
+    schema: {example: '[{"dagen": [1,2,3,4,5], "van": "08:00", "tot": "18:00"}]', selector: {object: {}}}
+persoon_wijzigen:
+  fields:
+    persoon: {required: true, selector: {text: {}}}
+    nieuwe_naam: {selector: {text: {}}}
+    pincode: {selector: {text: {type: password}}}
+    deuren: {selector: {object: {}}}
+    van: {selector: {date: {}}}
+    tot: {selector: {date: {}}}
+    schema: {selector: {object: {}}}
+    actief: {selector: {boolean: {}}}
+persoon_verwijderen:
+  fields:
+    persoon: {required: true, selector: {text: {}}}
+overzicht: {}
+tablet_koppelcode:
+  fields:
+    deur: {required: true, selector: {text: {}}}
+    naam: {example: Tablet vergaderzaal, selector: {text: {}}}
+tablet_intrekken:
+  fields:
+    tablet: {required: true, selector: {text: {}}}

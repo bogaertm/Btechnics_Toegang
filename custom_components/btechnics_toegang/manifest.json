@@ -1,0 +1,14 @@
+{
+  "domain": "btechnics_toegang",
+  "name": "Btechnics Toegang",
+  "codeowners": ["@bogaertm"],
+  "config_flow": true,
+  "dependencies": ["http"],
+  "documentation": "https://github.com/bogaertm/Btechnics_Toegang",
+  "integration_type": "service",
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/bogaertm/Btechnics_Toegang/issues",
+  "requirements": [],
+  "single_config_entry": true,
+  "version": "0.2.0"
+}
