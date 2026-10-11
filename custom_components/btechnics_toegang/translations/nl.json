@@ -1,0 +1,211 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Btechnics Toegang",
+        "description": "Codebeheer voor de deurtablets. Na de installatie maak je deuren, personen en koppelcodes met de diensten van Btechnics Toegang."
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Btechnics Toegang is al geïnstalleerd."
+    }
+  },
+  "entity": {
+    "select": {
+      "modus": {
+        "name": "Modus",
+        "state": {
+          "open": "Beschikbaar",
+          "afwezig": "Niet aanwezig",
+          "vergadering": "In vergadering",
+          "niet_storen": "Niet storen"
+        }
+      }
+    },
+    "binary_sensor": {
+      "online": {
+        "name": "Online"
+      }
+    },
+    "sensor": {
+      "laatste": {
+        "name": "Laatste toegang"
+      }
+    }
+  },
+  "services": {
+    "deur_toevoegen": {
+      "name": "Deur toevoegen",
+      "description": "Nieuwe deur met tablet.",
+      "fields": {
+        "naam": {
+          "name": "Naam",
+          "description": "Naam van de deur."
+        },
+        "open_entiteit": {
+          "name": "Openen met",
+          "description": "Schakelaar, script of slot dat de deur opent."
+        }
+      }
+    },
+    "deur_wijzigen": {
+      "name": "Deur wijzigen",
+      "description": "Naam of openen-entiteit van een deur aanpassen.",
+      "fields": {
+        "deur": {
+          "name": "Deur",
+          "description": "Naam of id."
+        },
+        "naam": {
+          "name": "Nieuwe naam",
+          "description": ""
+        },
+        "open_entiteit": {
+          "name": "Openen met",
+          "description": "Leeg laten om te wissen."
+        }
+      }
+    },
+    "deur_verwijderen": {
+      "name": "Deur verwijderen",
+      "description": "Verwijdert een deur zonder gekoppelde tablet.",
+      "fields": {
+        "deur": {
+          "name": "Deur",
+          "description": "Naam of id."
+        }
+      }
+    },
+    "deur_openen": {
+      "name": "Deur openen",
+      "description": "Opent de deur met de gekozen schakelaar of het gekozen script.",
+      "fields": {
+        "deur": {
+          "name": "Deur",
+          "description": "Naam of id."
+        }
+      }
+    },
+    "modus_zetten": {
+      "name": "Modus zetten",
+      "description": "Zet de modus van een deur.",
+      "fields": {
+        "deur": {
+          "name": "Deur",
+          "description": "Naam of id."
+        },
+        "modus": {
+          "name": "Modus",
+          "description": "open is Beschikbaar."
+        }
+      }
+    },
+    "persoon_toevoegen": {
+      "name": "Persoon toevoegen",
+      "description": "Nieuwe persoon met pincode en deuren.",
+      "fields": {
+        "naam": {
+          "name": "Naam",
+          "description": ""
+        },
+        "pincode": {
+          "name": "Pincode",
+          "description": "Minstens 4 cijfers, uniek."
+        },
+        "deuren": {
+          "name": "Deuren",
+          "description": "Lijst van deurnamen."
+        },
+        "van": {
+          "name": "Geldig vanaf",
+          "description": ""
+        },
+        "tot": {
+          "name": "Geldig tot",
+          "description": ""
+        },
+        "schema": {
+          "name": "Weekschema",
+          "description": "Lijst van blokken met dagen (1 is maandag), van en tot. Leeg is altijd."
+        }
+      }
+    },
+    "persoon_wijzigen": {
+      "name": "Persoon wijzigen",
+      "description": "Enkel de ingevulde velden veranderen. Lege pincode wist de pincode.",
+      "fields": {
+        "persoon": {
+          "name": "Persoon",
+          "description": "Naam of id."
+        },
+        "nieuwe_naam": {
+          "name": "Nieuwe naam",
+          "description": ""
+        },
+        "pincode": {
+          "name": "Pincode",
+          "description": ""
+        },
+        "deuren": {
+          "name": "Deuren",
+          "description": ""
+        },
+        "van": {
+          "name": "Geldig vanaf",
+          "description": ""
+        },
+        "tot": {
+          "name": "Geldig tot",
+          "description": ""
+        },
+        "schema": {
+          "name": "Weekschema",
+          "description": ""
+        },
+        "actief": {
+          "name": "Actief",
+          "description": ""
+        }
+      }
+    },
+    "persoon_verwijderen": {
+      "name": "Persoon verwijderen",
+      "description": "",
+      "fields": {
+        "persoon": {
+          "name": "Persoon",
+          "description": "Naam of id."
+        }
+      }
+    },
+    "overzicht": {
+      "name": "Overzicht",
+      "description": "Personen (zonder pincodes), deuren en tablets.",
+      "fields": {}
+    },
+    "tablet_koppelcode": {
+      "name": "Tablet koppelcode",
+      "description": "Maakt een koppelcode van 6 cijfers, 10 minuten geldig.",
+      "fields": {
+        "deur": {
+          "name": "Deur",
+          "description": "Naam of id."
+        },
+        "naam": {
+          "name": "Naam tablet",
+          "description": ""
+        }
+      }
+    },
+    "tablet_intrekken": {
+      "name": "Tablet intrekken",
+      "description": "De tablet krijgt daarna 401 en wist zijn lijst.",
+      "fields": {
+        "tablet": {
+          "name": "Tablet",
+          "description": "Naam of id."
+        }
+      }
+    }
+  }
+}
