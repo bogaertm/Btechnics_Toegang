@@ -18,14 +18,14 @@ KAART_BESTAND = "btechnics-toegang.js"
 async def async_registreer_kaarten(hass: HomeAssistant) -> None:
     if getattr(hass, "http", None) is None or "frontend" not in hass.config.components:
         return
-    from homeassistant.components.frontend import add_extra_js_url
     from homeassistant.components.http import StaticPathConfig
 
     versie = (await async_get_integration(hass, DOMAIN)).version
     await hass.http.async_register_static_paths(
         [StaticPathConfig(KAART_URL, str(Path(__file__).parent / "frontend"), False)]
     )
-    add_extra_js_url(hass, f"{KAART_URL}/{KAART_BESTAND}?v={versie}")
+    # Enkel als dashboardresource, niet via add_extra_js_url: dat script draait voor het kaartregister van
+    # de frontend klaar is, en dan bestaat de kaart niet voor het dashboard (vastgesteld op HA 2026.10).
 
     async def _bij_start(_hass):
         await _resource(hass, versie)
