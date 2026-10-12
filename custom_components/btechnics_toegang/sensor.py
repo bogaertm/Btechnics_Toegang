@@ -1,42 +1,72 @@
-"""Laatste toegang per deur, met de laatste 20 regels van het logboek als attribuut."""
-from homeassistant.components.sensor import SensorEntity
+"""Per deur: laatste toegang (zonder naam, zoals Btechnics VTO) en het aantal actieve codes."""
+from homeassistant.components.sensor import SensorEntity, SensorStateClass
 
 from .const import DOMAIN
 from .entiteit import ToegangEntiteit
+from .toegang import ts_lokaal
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
-    reg = hass.data[DOMAIN]["register"]
-    async_add_entities(LaatsteToegang(reg, d["id"]) for d in reg.data["deuren"].values())
+    d = hass.data[DOMAIN]
+    ents = []
+    for deur in d["register"].data["deuren"].values():
+        ents += [LaatsteToegang(d["register"], d["toegang"], deur["id"]), Codes(d["register"], deur["id"])]
+    async_add_entities(ents)
 
 
 class LaatsteToegang(ToegangEntiteit, SensorEntity):
     _attr_translation_key = "laatste"
-    _attr_icon = "mdi:account-key"
+    _unrecorded_attributes = frozenset({"recent"})
 
-    def __init__(self, reg, deur_id: str) -> None:
-        d = reg.data["deuren"][deur_id]
-        super().__init__(reg, deur_id, "Laatste", f"Deur {d['naam']}")
-        self.deur_id = deur_id
+    def __init__(self, reg, tg, deur_id: str) -> None:
+        super().__init__(reg, deur_id, "Laatste", f"Deur {reg.data['deuren'][deur_id]['naam']}")
+        self.tg, self.deur_id = tg, deur_id
         self._attr_unique_id = f"{deur_id}_laatste"
 
-    def _regels(self):
-        return [r for r in self.reg.data["log"] if r.get("deur_id") == self.deur_id]
+    def _laatste(self):
+        r = self.tg.recent.get(self.deur_id) or []
+        return r[0] if r else None
 
-    def _naam(self, r):
-        p = self.reg.data["personen"].get(r.get("persoon_id") or "")
-        return p["naam"] if p else None
+    @property
+    def available(self) -> bool:
+        return self.deur_id in self.reg.data["deuren"]
+
+    @property
+    def icon(self):
+        r = self._laatste()
+        return "mdi:door" if not r else "mdi:door-open" if r["opened"] else "mdi:door-closed-lock"
 
     @property
     def native_value(self):
-        regels = self._regels()
-        if not regels:
+        r = self._laatste()
+        if not r:
             return None
-        r = regels[-1]
-        return (f"{self._naam(r) or 'Onbekend'} ({r['soort']})")[:255]
+        hoe = "op afstand" if str(r["method"]).startswith("op afstand") else f"via {r['method']}"
+        return f"{'Geopend' if r['opened'] else 'Geweigerd'} {hoe}"
 
     @property
     def extra_state_attributes(self):
-        return {"logboek": [{"tijd": r.get("tijd"), "soort": r.get("soort"), "methode": r.get("methode"),
-                             "reden": r.get("reden"), "persoon": self._naam(r), "tekst": r.get("tekst")}
-                            for r in reversed(self._regels()[-20:])]}
+        r = self._laatste()
+        if not r:
+            return {}
+        return {"door_id": self.deur_id, "door": r["door"], "method": r["method"], "opened": r["opened"],
+                "time": ts_lokaal(r["ts"]).isoformat(), "ts": r["ts"]}
+
+
+class Codes(ToegangEntiteit, SensorEntity):
+    _attr_translation_key = "codes"
+    _attr_icon = "mdi:dialpad"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, reg, deur_id: str) -> None:
+        super().__init__(reg, deur_id, "Codes", f"Deur {reg.data['deuren'][deur_id]['naam']}")
+        self.deur_id = deur_id
+        self._attr_unique_id = f"{deur_id}_codes"
+
+    @property
+    def available(self) -> bool:
+        return self.deur_id in self.reg.data["deuren"]
+
+    @property
+    def native_value(self):
+        return sum(1 for p in self.reg.data["personen"].values() if p["status"] == "active" and self.deur_id in p["deuren"])

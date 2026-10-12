@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<meta name="theme-color" content="#ED6928">
+<title>Toegang</title>
+<style>
+  :root { --o: #ED6928; --g: #F59E32; --tekst: #1d1d1f; --zacht: #6b6b70; --lijn: #e3e3e6; --vlak: #f6f6f7; --kaart: #fff; --fout: #c62828; --ok: #0b8043; --bg: #fafafa; }
+  @media (prefers-color-scheme: dark) { :root { --tekst: #f2f2f4; --zacht: #a6a6ad; --lijn: #34343a; --vlak: #232327; --kaart: #1a1a1d; --bg: #111113; } }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--tekst); font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  .kop { background: var(--o); color: #fff; padding: calc(18px + env(safe-area-inset-top, 0px)) 20px 22px; }
+  .kop .merk { font-weight: 700; letter-spacing: 0.02em; opacity: 0.95; }
+  .kop h1 { margin: 6px 0 0; font-size: 1.5rem; font-weight: 600; line-height: 1.25; }
+  .kop p { margin: 6px 0 0; opacity: 0.95; }
+  main { max-width: 560px; margin: -10px auto 0; padding: 0 14px calc(40px + env(safe-area-inset-bottom, 0px)); }
+  .kaart { background: var(--kaart); border: 1px solid var(--lijn); border-radius: 16px; padding: 18px; margin-top: 14px; }
+  .kaart h2 { margin: 0 0 4px; font-size: 1.1rem; font-weight: 600; display: flex; gap: 10px; align-items: center; }
+  .nr { width: 26px; height: 26px; border-radius: 50%; background: var(--o); color: #fff; font-size: 0.85rem; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+  .uitleg { color: var(--zacht); font-size: 0.92rem; margin: 0 0 12px; }
+  label { display: block; font-size: 0.9rem; color: var(--zacht); margin: 12px 0 4px; }
+  input[type=text], input[type=tel], input[type=email], input[type=password] { width: 100%; font: inherit; font-size: 1.05rem; padding: 12px 14px; border-radius: 12px;
+    border: 1px solid var(--lijn); background: var(--kaart); color: var(--tekst); min-height: 50px; }
+  input:focus { outline: 2px solid var(--o); outline-offset: 1px; border-color: transparent; }
+  input.pin { letter-spacing: 6px; font-size: 1.4rem; text-align: center; font-variant-numeric: tabular-nums; }
+  .twee { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  @media (max-width: 380px) { .twee { grid-template-columns: 1fr; } }
+  .knop { display: inline-flex; align-items: center; justify-content: center; gap: 8px; width: 100%; min-height: 52px; border-radius: 14px; border: 0;
+    background: var(--o); color: #fff; font: inherit; font-weight: 600; font-size: 1.05rem; cursor: pointer; padding: 0 16px; margin-top: 14px; text-decoration: none; }
+  .knop.zacht { background: var(--vlak); color: var(--tekst); border: 1px solid var(--lijn); font-weight: 500; }
+  .knop:disabled { opacity: 0.6; }
+  .foto { display: flex; gap: 14px; align-items: center; }
+  .foto .voorbeeld { width: 96px; height: 96px; border-radius: 50%; background: var(--vlak); border: 2px dashed var(--lijn); flex: none; overflow: hidden;
+    display: flex; align-items: center; justify-content: center; color: var(--zacht); font-size: 2rem; }
+  .foto .voorbeeld img { width: 100%; height: 100%; object-fit: cover; }
+  .foto .knoppen { flex: 1; }
+  .foto .knop { margin-top: 0; }
+  .foto .knop + .knop { margin-top: 8px; }
+  input[type=file] { display: none; }
+  .vink { display: flex; gap: 12px; align-items: flex-start; margin-top: 12px; color: var(--tekst); font-size: 0.95rem; }
+  .vink input { width: 22px; height: 22px; margin-top: 2px; accent-color: var(--o); flex: none; }
+  details { margin-top: 10px; background: var(--vlak); border-radius: 12px; padding: 10px 14px; }
+  details summary { cursor: pointer; font-weight: 500; }
+  details p { font-size: 0.9rem; color: var(--zacht); margin: 8px 0; }
+  .melding { border-radius: 12px; padding: 12px 14px; margin-top: 14px; font-size: 0.95rem; display: none; }
+  .melding.fout { display: block; background: rgba(198, 40, 40, 0.1); color: var(--fout); }
+  .melding.ok { display: block; background: rgba(11, 128, 67, 0.1); color: var(--ok); }
+  .rij { display: flex; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--lijn); }
+  .rij:last-child { border-bottom: 0; }
+  .rij span:first-child { color: var(--zacht); }
+  .rij span:last-child { text-align: right; }
+  .chip { display: inline-block; background: var(--vlak); border-radius: 20px; padding: 2px 10px; margin: 2px 0 2px 4px; font-size: 0.9rem; }
+  .status { display: inline-flex; align-items: center; gap: 6px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: #0288d1; display: inline-block; }
+  .dot.blocked { background: #f4b400; } .dot.retired { background: #9e9e9e; }
+  .profiel { display: flex; gap: 16px; align-items: center; }
+  .profiel .voorbeeld { width: 72px; height: 72px; border-radius: 50%; overflow: hidden; background: var(--vlak); flex: none; }
+  .profiel .voorbeeld img { width: 100%; height: 100%; object-fit: cover; }
+  .profiel b { font-size: 1.2rem; display: block; }
+  .binnenkort { opacity: 0.75; }
+  .label { display: inline-block; font-size: 0.75rem; font-weight: 600; padding: 2px 8px; border-radius: 10px; background: var(--vlak); color: var(--zacht); margin-left: 6px; }
+  .klein { font-size: 0.85rem; color: var(--zacht); }
+  .verborgen { display: none !important; }
+  .link { word-break: break-all; background: var(--vlak); padding: 10px 12px; border-radius: 10px; font-size: 0.9rem; }
+  .laden { text-align: center; color: var(--zacht); padding: 40px 0; }
+</style>
+</head>
+<body>
+<div class="kop"><div class="merk" id="merk">Btechnics</div><h1 id="titel">Toegang</h1><p id="ondertitel"></p></div>
+<main id="main"><div class="laden">Laden...</div></main>
+<script>
+"use strict";
+// het pad wisselt na het aanmelden (uitnodiging naar vaste link), dus telkens opnieuw lezen
+const apiPad = () => location.pathname.replace(/\/$/, "");
+const $ = (s, r = document) => r.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const DAGEN = ["zondag", "maandag", "dinsdag", "woensdag", "donderdag", "vrijdag", "zaterdag"];
+const MAANDEN = ["januari", "februari", "maart", "april", "mei", "juni", "juli", "augustus", "september", "oktober", "november", "december"];
+const WEEK = ["", "Ma", "Di", "Wo", "Do", "Vr", "Za", "Zo"];
+let INFO = null, FOTO = null;
+
+function datum(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  const p = Object.fromEntries(new Intl.DateTimeFormat("en-GB", { timeZone: INFO.tijdzone, weekday: "short", year: "numeric", month: "numeric",
+    day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(d).map((x) => [x.type, x.value]));
+  const wd = new Date(Date.UTC(+p.year, +p.month - 1, +p.day)).getUTCDay();
+  return `${DAGEN[wd]} ${+p.day} ${MAANDEN[+p.month - 1]} ${p.year}, ${p.hour}u${p.minute}`;
+}
+function dagen(ds) {
+  const s = [...ds].sort((a, b) => a - b).join();
+  if (s === "1,2,3,4,5,6,7") return "elke dag";
+  if (s === "1,2,3,4,5") return "maandag tot vrijdag";
+  if (s === "6,7") return "in het weekend";
+  return ds.map((d) => WEEK[d]).join(", ");
+}
+function uren(schema) {
+  if (!schema || !schema.length) return "Altijd";
+  return schema.map((b) => `${dagen(b.dagen)} van ${b.van.replace(":", "u")} tot ${b.tot.replace(":", "u")}`).join("; ");
+}
+function geldig(i) {
+  if (i.valid_from && i.valid_until) return `Van ${datum(i.valid_from)} tot ${datum(i.valid_until)}`;
+  if (i.valid_from) return `Vanaf ${datum(i.valid_from)}`;
+  if (i.valid_until) return `Tot ${datum(i.valid_until)}`;
+  return "Zonder einddatum";
+}
+function melding(el, tekst, ok) { el.className = "melding " + (ok ? "ok" : "fout"); el.textContent = tekst; if (tekst) el.scrollIntoView({ block: "nearest", behavior: "smooth" }); }
+async function post(pad, data) {
+  const r = await fetch(apiPad() + pad, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data), cache: "no-store" });
+  let j = {};
+  try { j = await r.json(); } catch (e) { /* geen JSON */ }
+  if (!r.ok) throw new Error(j.fout || "Er ging iets mis. Probeer opnieuw.");
+  return j;
+}
+// foto verkleinen in de gsm (max 900 px, JPEG): sneller doorsturen en minder opslag
+function verklein(file) {
+  return new Promise((ok, nok) => {
+    const img = new Image();
+    img.onload = () => {
+      const max = 900, s = Math.min(1, max / Math.max(img.width, img.height));
+      const c = document.createElement("canvas");
+      c.width = Math.round(img.width * s); c.height = Math.round(img.height * s);
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(img.src);
+      ok(c.toDataURL("image/jpeg", 0.85));
+    };
+    img.onerror = () => nok(new Error("Deze foto kan niet gelezen worden. Probeer een andere."));
+    img.src = URL.createObjectURL(file);
+  });
+}
+function fotoBlok(id, verplicht) {
+  return `<div class="foto"><div class="voorbeeld" id="${id}-v">&#128100;</div><div class="knoppen">
+    <button type="button" class="knop" data-camera="${id}">Foto nemen</button>
+    <button type="button" class="knop zacht" data-kies="${id}">Kies een foto</button>
+    <input type="file" accept="image/*" capture="user" id="${id}-cam"><input type="file" accept="image/*" id="${id}-file"></div></div>
+    <p class="klein" style="margin:10px 0 0">${verplicht ? "Verplicht. " : ""}Een duidelijke foto van je gezicht, zoals op een badge. Enkel de beheerder ziet ze.</p>`;
+}
+function koppelFoto(id, melder) {
+  const kies = async (file) => {
+    if (!file) return;
+    try {
+      FOTO = await verklein(file);
+      $(`#${id}-v`).innerHTML = `<img src="${FOTO}" alt="Je foto">`;
+      melding(melder, "");
+    } catch (e) { melding(melder, e.message); }
+  };
+  $(`[data-camera="${id}"]`).addEventListener("click", () => $(`#${id}-cam`).click());
+  $(`[data-kies="${id}"]`).addEventListener("click", () => $(`#${id}-file`).click());
+  $(`#${id}-cam`).addEventListener("change", (e) => kies(e.target.files[0]));
+  $(`#${id}-file`).addEventListener("change", (e) => kies(e.target.files[0]));
+}
+function privacy() {
+  const b = INFO.bedrijf;
+  return `<details><summary>Privacyverklaring</summary>
+    <p>${esc(b.naam)} (${esc(b.verantwoordelijke)}, ${esc(b.adres)}) bewaart je naam, gsm-nummer, e-mailadres, foto en toegangscode om de toegang tot het gebouw te beheren en om te weten wie wanneer binnenkwam. Elke toegang wordt 400 dagen bewaard.</p>
+    <p>Je foto dient enkel om je te herkennen. Ze wordt niet gebruikt voor automatische gezichtsherkenning, tenzij je dat later zelf aanzet. Je gegevens blijven op de eigen server in het gebouw en gaan niet naar derden.</p>
+    <p>Zodra je geen toegang meer nodig hebt, worden je gegevens en je foto gewist. Je kan altijd vragen om je gegevens in te zien, te verbeteren of te wissen via <a href="mailto:${esc(b.email)}">${esc(b.email)}</a>. Ben je niet tevreden, dan kan je terecht bij de Gegevensbeschermingsautoriteit (gegevensbeschermingsautoriteit.be).</p></details>`;
+}
+function gezichtKaart() {
+  return `<div class="kaart binnenkort"><h2><span class="nr">&#9786;</span>Gezichtsherkenning<span class="label">binnenkort</span></h2>
+    <p class="uitleg" style="margin:0">Straks kan je ervoor kiezen om de deur te openen met je gezicht. Dat is helemaal vrijwillig: je code blijft altijd werken. Je zet het dan aan via deze pagina.</p></div>`;
+}
+
+function toonOngeldig(fout) {
+  $("#titel").textContent = "Link niet geldig";
+  $("#ondertitel").textContent = "";
+  $("#main").innerHTML = `<div class="kaart"><p style="margin:0">${esc(fout || "Deze link werkt niet (meer).")}</p>
+    <p class="klein">Vraag een nieuwe link aan ${esc((INFO && INFO.bedrijf.verantwoordelijke) || "de beheerder")}.</p></div>`;
+}
+
+function toonUitnodiging() {
+  const i = INFO;
+  $("#titel").textContent = i.naam ? `Welkom ${i.naam}` : "Welkom";
+  $("#ondertitel").textContent = `Maak in een paar stappen je toegang tot ${i.bedrijf.naam} aan.`;
+  $("#main").innerHTML = `
+    <div class="kaart"><div class="rij"><span>Deuren</span><span>${i.deuren.map((d) => `<span class="chip">${esc(d)}</span>`).join("")}</span></div>
+      <div class="rij"><span>Uren</span><span>${esc(uren(i.schema))}</span></div>
+      <div class="rij"><span>Geldig</span><span>${esc(geldig(i))}</span></div></div>
+    <form id="f" novalidate>
+    <div class="kaart"><h2><span class="nr">1</span>Jouw gegevens</h2>
+      <div class="twee"><div><label for="vn">Voornaam</label><input id="vn" type="text" autocomplete="given-name" required></div>
+        <div><label for="an">Naam</label><input id="an" type="text" autocomplete="family-name" required></div></div>
+      <label for="tel">Gsm-nummer</label><input id="tel" type="tel" autocomplete="tel" placeholder="+32 4.. .. .. .." required>
+      <label for="mail">E-mailadres</label><input id="mail" type="email" autocomplete="email" required></div>
+    <div class="kaart"><h2><span class="nr">2</span>Jouw code</h2>
+      <p class="uitleg">Kies zelf ${i.pin.min} tot ${i.pin.max} cijfers. Die typ je op het scherm naast de deur. Kies geen reeks zoals 1234 of je geboortejaar.</p>
+      <div class="twee"><div><label for="p1">Code</label><input id="p1" class="pin" type="password" inputmode="numeric" autocomplete="new-password" maxlength="${i.pin.max}"></div>
+        <div><label for="p2">Nog eens</label><input id="p2" class="pin" type="password" inputmode="numeric" autocomplete="new-password" maxlength="${i.pin.max}"></div></div></div>
+    <div class="kaart"><h2><span class="nr">3</span>Jouw foto</h2>${fotoBlok("ft", true)}</div>
+    ${gezichtKaart()}
+    <div class="kaart"><h2><span class="nr">4</span>Bevestigen</h2>${privacy()}
+      <label class="vink"><input type="checkbox" id="ok"> Ik heb de privacyverklaring gelezen en ga akkoord.</label>
+      <div id="m" class="melding"></div>
+      <button class="knop" id="verstuur" type="submit">Toegang aanmaken</button></div>
+    </form>`;
+  const m = $("#m");
+  koppelFoto("ft", m);
+  ["p1", "p2"].forEach((id) => $("#" + id).addEventListener("input", (e) => { e.target.value = e.target.value.replace(/\D/g, ""); }));
+  $("#f").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const d = { voornaam: $("#vn").value.trim(), achternaam: $("#an").value.trim(), telefoon: $("#tel").value.trim(),
+      email: $("#mail").value.trim(), pin: $("#p1").value, pin2: $("#p2").value, foto: FOTO, akkoord: $("#ok").checked };
+    if (!d.voornaam || !d.achternaam) return melding(m, "Vul je voornaam en naam in.");
+    if (!d.telefoon) return melding(m, "Vul je gsm-nummer in.");
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(d.email)) return melding(m, "Vul een geldig e-mailadres in.");
+    if (d.pin.length < i.pin.min || d.pin.length > i.pin.max) return melding(m, `Je code heeft ${i.pin.min} tot ${i.pin.max} cijfers.`);
+    if (d.pin !== d.pin2) return melding(m, "De twee codes zijn niet gelijk.");
+    if (!FOTO) return melding(m, "Neem of kies eerst een foto.");
+    if (!d.akkoord) return melding(m, "Vink aan dat je akkoord gaat met de privacyverklaring.");
+    const b = $("#verstuur"); b.disabled = true; b.textContent = "Bezig...";
+    try {
+      const r = await post("/aanmelden", d);
+      // vanaf nu de vaste, persoonlijke link gebruiken
+      history.replaceState(null, "", r.url.replace(/^https?:\/\/[^/]+/, ""));
+      toonKlaar(r.url, d.voornaam);
+    } catch (e) {
+      melding(m, e.message); b.disabled = false; b.textContent = "Toegang aanmaken";
+    }
+  });
+}
+
+function toonKlaar(url, voornaam) {
+  $("#titel").textContent = `Klaar, ${voornaam}!`;
+  $("#ondertitel").textContent = "Je code werkt vanaf nu.";
+  $("#main").innerHTML = `<div class="kaart"><h2>Je persoonlijke pagina</h2>
+    <p class="uitleg">Bewaar deze pagina, bijvoorbeeld als bladwijzer of op je beginscherm. Hier pas je later je gegevens, foto of code aan. Deel deze link met niemand.</p>
+    <div class="link" id="lnk">${esc(url)}</div>
+    <button class="knop" id="kopie">Link kopiëren</button>
+    <button class="knop zacht" id="verder">Naar mijn pagina</button><div id="m" class="melding"></div></div>`;
+  $("#kopie").addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText(url); melding($("#m"), "Link gekopieerd.", true); }
+    catch (e) { melding($("#m"), "Kopiëren lukt niet. Hou de link ingedrukt om ze te kopiëren."); }
+  });
+  $("#verder").addEventListener("click", () => laad());
+}
+
+function toonPersoon() {
+  const i = INFO;
+  const st = i.status === "active" ? "Actief" : i.status === "retired" ? "Uit dienst" : "Geblokkeerd";
+  $("#titel").textContent = `Hallo ${i.voornaam || i.naam}`;
+  $("#ondertitel").textContent = `Je toegang bij ${i.bedrijf.naam}`;
+  const fotoSrc = i.foto ? `${apiPad()}/foto?v=${i.foto_v}` : "";
+  $("#main").innerHTML = `
+    <div class="kaart"><div class="profiel"><div class="voorbeeld">${fotoSrc ? `<img src="${fotoSrc}" alt="Je foto">` : ""}</div>
+      <div><b>${esc(i.naam)}</b><span class="status"><span class="dot ${esc(i.status)}"></span>${st}</span></div></div>
+      <div style="margin-top:12px"><div class="rij"><span>Deuren</span><span>${i.deuren.map((d) => `<span class="chip">${esc(d)}</span>`).join("")}</span></div>
+      <div class="rij"><span>Uren</span><span>${esc(uren(i.schema))}</span></div>
+      <div class="rij"><span>Geldig</span><span>${esc(geldig(i))}</span></div>
+      <div class="rij"><span>Code</span><span>${"&bull;".repeat(i.pin_lengte || 0)} (${i.pin_lengte} cijfers)</span></div></div></div>
+    ${i.recent && i.recent.length ? `<div class="kaart"><h2>Laatste toegangen</h2>${i.recent.map((r) => `<div class="rij"><span>${esc(datum(new Date(r.ts * 1000).toISOString()))}</span>
+      <span>${esc(r.door)} <span class="dot ${r.opened ? "" : "retired"}" style="${r.opened ? "" : "background:#c62828"}"></span></span></div>`).join("")}</div>` : ""}
+    <form id="f" novalidate class="kaart"><h2>Gegevens aanpassen</h2>
+      <p class="uitleg">Vul enkel in wat je wil wijzigen. Ter controle vragen we altijd je huidige code.</p>
+      <label for="tel">Gsm-nummer</label><input id="tel" type="tel" autocomplete="tel" value="${esc(i.telefoon)}">
+      <label for="mail">E-mailadres</label><input id="mail" type="email" autocomplete="email" value="${esc(i.email)}">
+      <label>Nieuwe foto</label>${fotoBlok("ft", false)}
+      <label for="p1">Nieuwe code (optioneel)</label>
+      <div class="twee"><input id="p1" class="pin" type="password" inputmode="numeric" autocomplete="new-password" maxlength="${i.pin.max}" placeholder="nieuw">
+        <input id="p2" class="pin" type="password" inputmode="numeric" autocomplete="new-password" maxlength="${i.pin.max}" placeholder="nog eens"></div>
+      <label for="huidig">Je huidige code</label><input id="huidig" class="pin" type="password" inputmode="numeric" autocomplete="current-password" maxlength="${i.pin.max}">
+      <div id="m" class="melding"></div>
+      <button class="knop" id="bewaar" type="submit">Bewaren</button></form>
+    ${gezichtKaart()}
+    <div class="kaart">${privacy()}</div>`;
+  const m = $("#m");
+  FOTO = null;
+  koppelFoto("ft", m);
+  ["p1", "p2", "huidig"].forEach((id) => $("#" + id).addEventListener("input", (e) => { e.target.value = e.target.value.replace(/\D/g, ""); }));
+  $("#f").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const d = { huidige_pin: $("#huidig").value, telefoon: $("#tel").value.trim(), email: $("#mail").value.trim() };
+    if (!d.huidige_pin) return melding(m, "Vul je huidige code in.");
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(d.email)) return melding(m, "Vul een geldig e-mailadres in.");
+    const p1 = $("#p1").value, p2 = $("#p2").value;
+    if (p1 || p2) {
+      if (p1.length < i.pin.min || p1.length > i.pin.max) return melding(m, `Je nieuwe code heeft ${i.pin.min} tot ${i.pin.max} cijfers.`);
+      if (p1 !== p2) return melding(m, "De twee nieuwe codes zijn niet gelijk.");
+      d.pin = p1; d.pin2 = p2;
+    }
+    if (FOTO) d.foto = FOTO;
+    const b = $("#bewaar"); b.disabled = true; b.textContent = "Bezig...";
+    try {
+      await post("/wijzig", d);
+      await laad();
+      melding($("#m"), d.pin ? "Bewaard. Je nieuwe code werkt binnen een minuut." : "Bewaard.", true);
+    } catch (e) {
+      melding(m, e.message); b.disabled = false; b.textContent = "Bewaren";
+    }
+  });
+}
+
+async function laad() {
+  try {
+    const r = await fetch(apiPad() + "/info", { cache: "no-store" });
+    INFO = await r.json();
+  } catch (e) {
+    INFO = null;
+    return toonOngeldig("Geen verbinding. Probeer het straks opnieuw.");
+  }
+  if (INFO.bedrijf) { $("#merk").textContent = INFO.bedrijf.naam; document.title = `Toegang ${INFO.bedrijf.naam}`; }
+  if (INFO.soort === "uitnodiging") return toonUitnodiging();
+  if (INFO.soort === "persoon") return toonPersoon();
+  return toonOngeldig(INFO.fout);
+}
+laad();
+</script>
+</body>
+</html>

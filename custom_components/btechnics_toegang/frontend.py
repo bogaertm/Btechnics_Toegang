@@ -12,7 +12,7 @@ from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 KAART_URL = "/btechnics_toegang_static"
-KAART_BESTAND = "btechnics-toegang.js"
+KAART_BESTANDEN = ["btechnics-toegang-kaarten.js", "btechnics-toegang.js"]
 
 
 async def async_registreer_kaarten(hass: HomeAssistant) -> None:
@@ -43,14 +43,15 @@ async def _resource(hass: HomeAssistant, versie: str) -> None:
         if not getattr(resources, "loaded", False):
             await resources.async_load()
             resources.loaded = True
-        basis = f"{KAART_URL}/{KAART_BESTAND}"
-        url = f"{basis}?v={versie}"
-        mijn = [r for r in resources.async_items() if str(r.get("url", "")).split("?")[0] == basis]
-        if not mijn:
-            await resources.async_create_item({"res_type": "module", "url": url})
-        elif mijn[0].get("url") != url:
-            await resources.async_update_item(mijn[0]["id"], {"res_type": "module", "url": url})
-        for extra in mijn[1:]:
-            await resources.async_delete_item(extra["id"])
+        for bestand in KAART_BESTANDEN:
+            basis = f"{KAART_URL}/{bestand}"
+            url = f"{basis}?v={versie}"
+            mijn = [r for r in resources.async_items() if str(r.get("url", "")).split("?")[0] == basis]
+            if not mijn:
+                await resources.async_create_item({"res_type": "module", "url": url})
+            elif mijn[0].get("url") != url:
+                await resources.async_update_item(mijn[0]["id"], {"res_type": "module", "url": url})
+            for extra in mijn[1:]:
+                await resources.async_delete_item(extra["id"])
     except Exception:  # noqa: BLE001
         _LOGGER.exception("Dashboardresource registreren mislukt")

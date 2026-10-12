@@ -43,7 +43,9 @@ async def test_volledige_flow(opgezet):
     await dienst(hass, "deur_toevoegen", naam="Vergaderzaal", open_entiteit="switch.relais_vergaderzaal")
     await hass.async_block_till_done()
     jan = (await dienst(hass, "persoon_toevoegen", naam="Jan Peeters", pincode="4711", deuren=["Vergaderzaal"]))["persoon"]
-    await dienst(hass, "persoon_toevoegen", naam="Elders", pincode="9999", deuren=[])
+    await dienst(hass, "deur_toevoegen", naam="Kelder")
+    await hass.async_block_till_done()
+    await dienst(hass, "persoon_toevoegen", naam="Elders", pincode="9988", deuren=["Kelder"])
     assert "pin" not in jan and jan["pincode"] is True
 
     # zonder sleutel: 401
@@ -87,7 +89,8 @@ async def test_volledige_flow(opgezet):
 
     # logboek, dubbele uid wordt genegeerd
     events = []
-    hass.bus.async_listen(f"{DOMAIN}_toegang", lambda e: events.append(e))
+    from homeassistant.core import callback
+    hass.bus.async_listen(f"{DOMAIN}_toegang", callback(lambda e: events.append(e)))
     regel = {"uid": "u1", "tijd": "2026-10-11T17:06:12+02:00", "soort": "toegang", "methode": "pin",
              "persoon_id": jan["id"], "tekst": "Jan met pincode"}
     fout = {"uid": "u2", "tijd": "2026-10-11T17:07:00+02:00", "soort": "geweigerd", "methode": "pin",
@@ -97,8 +100,10 @@ async def test_volledige_flow(opgezet):
     r = await client.post(f"{API}/log", headers=kop, json={"items": [regel]})
     assert (await r.json())["ontvangen"] == ["u1"]
     await hass.async_block_till_done()
-    assert len(events) == 2 and {e.data["persoon"] for e in events} == {"Jan Peeters", None}
-    assert len([x for x in hass.data[DOMAIN]["register"].data["log"] if x["uid"] == "u1"]) == 1
+    assert len(events) == 2 and {e.data["persoon"] for e in events} == {"Jan Peeters", "Foute code"}
+    arch = hass.data[DOMAIN]["toegang"].archief
+    rij = await hass.async_add_executor_job(arch.recent, antw["deur_id"], 10)
+    assert len(rij) == 2 and {r["name"] for r in rij} == {"Jan Peeters", "Foute code"}
 
     # openen: Jan mag, onbekende niet, Elders niet (geen recht op deze deur)
     r = await client.post(f"{API}/open", headers=kop, json={"methode": "pin", "persoon_id": jan["id"]})
@@ -112,6 +117,8 @@ async def test_volledige_flow(opgezet):
     r = await client.post(f"{API}/open", headers=kop, json={"methode": "knop"})
     assert r.status == 200
     assert len(calls) == 2
+    # HA schrijft zelf geen dubbele regel bij /open (de tablet logt zelf)
+    assert len(await hass.async_add_executor_job(arch.recent, antw["deur_id"], 10)) == 2
 
     # status: tablet online
     r = await client.post(f"{API}/status", headers=kop, json={"app_versie": "1.60", "version_code": 54,
@@ -151,20 +158,22 @@ async def test_pincode_uniek_en_validatie(opgezet):
     from homeassistant.exceptions import HomeAssistantError
     await dienst(hass, "deur_toevoegen", naam="Vergaderzaal")
     await dienst(hass, "persoon_toevoegen", naam="A", pincode="1234", deuren=["Vergaderzaal"])
-    with pytest.raises(HomeAssistantError, match="al in gebruik"):
-        await dienst(hass, "persoon_toevoegen", naam="B", pincode="1234")
-    with pytest.raises(HomeAssistantError, match="minstens 4"):
-        await dienst(hass, "persoon_toevoegen", naam="C", pincode="12")
-    with pytest.raises(HomeAssistantError, match="bestaat niet"):
+    with pytest.raises(HomeAssistantError, match="in gebruik"):
+        await dienst(hass, "persoon_toevoegen", naam="B", pincode="1234", deuren=["Vergaderzaal"])
+    with pytest.raises(HomeAssistantError, match="4 tot 8"):
+        await dienst(hass, "persoon_toevoegen", naam="C", pincode="12", deuren=["Vergaderzaal"])
+    with pytest.raises(HomeAssistantError, match="onbekende deur"):
         await dienst(hass, "persoon_toevoegen", naam="D", pincode="5555", deuren=["Kelder"])
 
 
-async def test_buiten_schema_geweigerd(opgezet):
+async def test_geblokkeerd_geweigerd(opgezet):
     hass, client = opgezet
     async_mock_service(hass, "switch", "turn_on")
     await dienst(hass, "deur_toevoegen", naam="Vergaderzaal", open_entiteit="switch.x")
-    p = (await dienst(hass, "persoon_toevoegen", naam="Oud", pincode="2468", deuren=["Vergaderzaal"],
-                      tot="2020-01-01"))["persoon"]
+    p = (await dienst(hass, "persoon_toevoegen", naam="Oud", pincode="2468", deuren=["Vergaderzaal"]))["persoon"]
+    await dienst(hass, "persoon_blokkeren", persoon=p["id"])
     kop, _ = await koppel(hass, client)
     r = await client.post(f"{API}/open", headers=kop, json={"methode": "pin", "persoon_id": p["id"]})
-    assert r.status == 403 and (await r.json())["reden"] == "verlopen"
+    assert r.status == 403 and (await r.json())["reden"] == "buiten_schema"
+    r = await client.get(f"{API}/lijst", headers=kop)
+    assert (await r.json())["personen"] == []

@@ -239,7 +239,7 @@ class BtxToegang extends HTMLElement {
   async _laad(force) {
     if (!force && (this._busy || this._form)) return;
     try {
-      this._data = await this._ws({ type: `${D}/data`, log: 2000 });
+      this._data = await this._ws({ type: `${D}/data`, log: 200 });
       this._render();
     } catch (e) {
       const o = this.$("out");
@@ -319,6 +319,8 @@ class BtxToegang extends HTMLElement {
             <span class="mt"><b>${esc(t.naam)}</b><div class="hint">${t.online ? "Online" : "Offline"}${t.laatst ? `, laatst gezien ${esc(f.compact(new Date(t.laatst)))}` : ""}${t.app_versie ? ` · app ${esc(t.app_versie)}` : ""}${t.status && t.status.log_wachtrij ? ` · ${t.status.log_wachtrij} logregels in wachtrij` : ""}</div></span>
             <span class="acts"><button class="btn danger" data-a="intrekken" data-id="${t.id}"><ha-icon icon="mdi:link-off"></ha-icon> Ontkoppelen</button></span></div>`).join("")
           : `<div class="hint">Nog geen tablet gekoppeld.</div>`}
+        ${(() => { const meld = (this._data.log || []).filter((r) => r.deur_id === d.id).slice(0, 5);
+          return meld.length ? `<div class="sub">Laatste meldingen van de tablet</div>${meld.map((r) => `<div class="hint">${esc(f.compact(new Date(r.tijd)))} · ${esc(SOORT[r.soort] || r.soort)}: ${esc(r.tekst || "")}</div>`).join("")}` : ""; })()}
         ${c ? `<div class="bigcode"><span class="mono">${esc(c.code)}</span><small>Koppelcode voor ${esc(d.naam)}. Geef ze in op de tablet onder Beheer, Koppelen.<br>Nog ${Math.floor(rest / 60)}:${String(rest % 60).padStart(2, "0")} geldig, één keer bruikbaar.</small></div>`
           : `<div style="margin-top:10px"><button class="btn" data-a="koppel" data-id="${d.id}"><ha-icon icon="mdi:tablet"></ha-icon> Tablet koppelen</button></div>`}
       </div>`;

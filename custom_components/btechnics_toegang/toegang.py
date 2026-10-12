@@ -1,0 +1,112 @@
+"""Toegangen verwerken: logregels van de tablets en openingen via Home Assistant naar het archief,
+events en de cache van recente toegangen per deur (voor sensoren en het overzicht)."""
+from __future__ import annotations
+
+import logging
+import uuid
+from datetime import datetime
+
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.dispatcher import async_dispatcher_send
+from homeassistant.util import dt as dt_util
+
+from .archief import Archief
+from .const import EVENT_TOEGANG, LOG_METHODES, LOG_REDENEN, LOG_SOORTEN, SIGNAL_UPDATE
+from .register import Register, ToegangFout
+
+_LOGGER = logging.getLogger(__name__)
+
+METHODE_LABEL = {"pin": "code", "kaart": "badge", "gezicht": "gezicht", "ha": "op afstand", "knop": "exitknop"}
+NAAM_ZONDER_PERSOON = {"pin": "Foute code", "kaart": "Onbekende badge", "gezicht": "Onbekend gezicht",
+                       "ha": "Op afstand", "knop": "Exitknop"}
+RECENT = 10
+
+
+class Toegang:
+    def __init__(self, hass: HomeAssistant, reg: Register, archief: Archief) -> None:
+        self.hass, self.reg, self.archief = hass, reg, archief
+        self.recent: dict[str, list[dict]] = {}
+
+    async def async_start(self) -> None:
+        for did in self.reg.data["deuren"]:
+            self.recent[did] = await self.hass.async_add_executor_job(self.archief.recent, did, RECENT)
+        # logregels van v0.2/v0.3 (in de opslag) eenmalig naar het archief
+        oud = getattr(self.reg, "_oud_log", [])
+        if oud:
+            rijen = [r for r in (self._archiefrij(x, x.get("deur_id"), x.get("deur", "")) for x in oud) if r]
+            await self.hass.async_add_executor_job(self.archief.toevoegen, rijen)
+            self.reg._oud_log = []
+            self.reg.gewijzigd(lijst_veranderd=False)
+
+    def _archiefrij(self, r: dict, deur_id: str | None, deur: str) -> dict | None:
+        if r.get("soort") not in ("toegang", "geweigerd") or not deur_id:
+            return None
+        t = dt_util.parse_datetime(str(r.get("tijd") or "")) or dt_util.now()
+        p = self.reg.data["personen"].get(r.get("persoon_id") or "")
+        methode = r.get("methode")
+        naam = p["naam"] if p else NAAM_ZONDER_PERSOON.get(methode, "Onbekende code")
+        if methode == "ha" and r.get("wie"):
+            label = f"op afstand door {r['wie']}"
+        else:
+            label = METHODE_LABEL.get(methode, "onbekend")
+        return {"uid": str(r.get("uid") or uuid.uuid4()), "door_id": deur_id, "door": deur, "ts": int(t.timestamp()),
+                "name": naam, "method": label, "opened": r.get("soort") == "toegang",
+                "persoon_id": p["id"] if p else "", "tekst": str(r.get("tekst") or "")[:200]}
+
+    async def async_regels(self, tablet: dict, items: list) -> list[str]:
+        """Logboek van een tablet. Toegangen naar het archief, de rest naar de tabletmeldingen."""
+        deur = self.reg.data["deuren"].get(tablet["deur_id"], {})
+        ontvangen, rijen = [], []
+        for r in items[:500]:
+            if not isinstance(r, dict) or not r.get("uid"):
+                continue
+            uid = str(r["uid"])[:64]
+            regel = {
+                "uid": uid, "tijd": str(r.get("tijd") or dt_util.now().isoformat())[:40],
+                "soort": r.get("soort") if r.get("soort") in LOG_SOORTEN else "systeem",
+                "methode": r.get("methode") if r.get("methode") in LOG_METHODES else None,
+                "reden": r.get("reden") if r.get("reden") in LOG_REDENEN else None,
+                "persoon_id": r.get("persoon_id") or None, "tekst": str(r.get("tekst") or "")[:200],
+                "tablet_id": tablet["id"], "deur_id": tablet["deur_id"], "deur": deur.get("naam", ""),
+            }
+            ontvangen.append(uid)
+            rij = self._archiefrij(regel, tablet["deur_id"], deur.get("naam", ""))
+            if rij:
+                rijen.append((rij, regel))
+            elif not any(g.get("uid") == uid for g in self.reg.data["gebeurtenissen"][-200:]):
+                self.reg.gebeurtenis(regel)
+        if rijen:
+            nieuw = await self.hass.async_add_executor_job(self.archief.toevoegen, [x for x, _ in rijen])
+            if nieuw:
+                await self._na_toevoegen(tablet["deur_id"], rijen)
+        return ontvangen
+
+    async def _na_toevoegen(self, deur_id: str, rijen: list[tuple[dict, dict]]) -> None:
+        self.recent[deur_id] = await self.hass.async_add_executor_job(self.archief.recent, deur_id, RECENT)
+        for rij, regel in rijen:
+            self.hass.bus.async_fire(EVENT_TOEGANG, {**regel, "persoon": rij["name"], "opened": rij["opened"]})
+        async_dispatcher_send(self.hass, SIGNAL_UPDATE)
+
+    async def async_registreer(self, deur: dict, *, methode: str, persoon: dict | None, opened: bool, tekst: str,
+                               wie: str | None = None) -> None:
+        """Een opening of weigering die Home Assistant zelf afhandelde (POST /open of Deur openen)."""
+        regel = {"uid": f"ha-{uuid.uuid4()}", "tijd": dt_util.now().replace(microsecond=0).isoformat(),
+                 "soort": "toegang" if opened else "geweigerd", "methode": methode,
+                 "persoon_id": persoon["id"] if persoon else None, "tekst": tekst, "wie": wie,
+                 "deur_id": deur["id"], "deur": deur["naam"]}
+        rij = self._archiefrij(regel, deur["id"], deur["naam"])
+        await self.hass.async_add_executor_job(self.archief.toevoegen, [rij])
+        await self._na_toevoegen(deur["id"], [(rij, regel)])
+
+    async def async_deur_openen(self, deur: dict) -> None:
+        ent = deur.get("open_entiteit")
+        if not ent:
+            raise ToegangFout(f"Voor deur {deur['naam']} is geen schakelaar of script gekozen")
+        domein = ent.split(".")[0]
+        dienst = {"script": ("script", "turn_on"), "lock": ("lock", "unlock"), "button": ("button", "press"),
+                  "input_button": ("input_button", "press")}.get(domein, (domein, "turn_on"))
+        await self.hass.services.async_call(*dienst, {"entity_id": ent}, blocking=True)
+
+
+def ts_lokaal(ts: int) -> datetime:
+    return dt_util.as_local(dt_util.utc_from_timestamp(ts))

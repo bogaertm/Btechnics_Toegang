@@ -25,8 +25,11 @@ async def test_ws_data(opgezet, hass_ws_client):
     assert r["success"]
     d = r["result"]
     assert d["deuren"][0]["naam"] == "Vergaderzaal"
-    assert d["personen"][0]["pin"] == "4711" and d["personen"][0]["schema"][0]["dagen"] == [1, 2]
-    assert d["tablets"] == [] and d["log"] == []
+    assert d["personen"][0]["naam"] == "Jan" and d["tablets"] == [] and d["log"] == []
+    await ws.send_json({"id": 2, "type": f"{DOMAIN}/manage/list"})
+    r = await ws.receive_json()
+    e = r["result"]["entries"][0]
+    assert e["secret"] == "4711" and e["schema"][0]["dagen"] == [1, 2] and e["status"] == "active"
 
 
 async def test_diensten_enkel_beheerder(opgezet, hass_read_only_user):
