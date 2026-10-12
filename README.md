@@ -13,27 +13,25 @@ Het contract tussen HA en de tablets staat in het afsprakendocument, schema 1.
 
 ## Dashboard
 
-Kaart `custom:btechnics-toegang` met `view: deuren`, `personen` of `logboek`. De kaart wordt automatisch geladen (geen resource toevoegen). Enkel beheerders.
+Het dashboard **Deurtoegang** heeft vijf tabbladen, met dezelfde werking als Btechnics VTO (Trefpunt):
 
-```yaml
-type: custom:btechnics-toegang
-view: personen
-```
-
-## Acties (Ontwikkelhulpmiddelen, Acties, enkel beheerders)
-
-| Actie | Wat |
+| Tabblad | Kaart |
 |---|---|
-| `btechnics_toegang.deur_toevoegen` | Deur met naam en de schakelaar of het script dat ze opent |
-| `btechnics_toegang.persoon_toevoegen` | Persoon met pincode, deuren, van/tot en weekschema |
-| `btechnics_toegang.persoon_wijzigen` / `persoon_verwijderen` | Aanpassen of weg |
-| `btechnics_toegang.tablet_koppelcode` | Koppelcode van 6 cijfers, 10 minuten geldig |
-| `btechnics_toegang.tablet_intrekken` | Tablet ontkoppelen |
-| `btechnics_toegang.modus_zetten` | open, afwezig, vergadering, niet_storen |
-| `btechnics_toegang.overzicht` | Alles op een rij, zonder pincodes |
+| Overzicht | `custom:btechnics-toegang-overzicht` |
+| Codes | `custom:btechnics-toegang-codes` (tijdelijke codes, vaste codes, uitnodigingen, portaallinks, wijzigingen) |
+| Historiek | `custom:btechnics-toegang-historiek` (400 dagen, per persoon, per dag, CSV) |
+| Deuren | `custom:btechnics-toegang` met `view: deuren` (modus, openen, tablets koppelen) |
+| Handleiding | `custom:btechnics-toegang-handleiding` |
 
-Per deur: `select.deur_<naam>_modus` en `sensor.deur_<naam>_laatste_toegang`. Per tablet: `binary_sensor.tablet_<naam>_online`.
-Elke toegang vuurt het event `btechnics_toegang_toegang`.
+De kaarten worden automatisch geladen. Gebruikers zonder beheerrechten zien enkel hun eigen tijdelijke codes (maximaal 7 dagen, 10 tegelijk).
+
+## Portaal
+
+Een uitnodiging geeft een link naar `/api/btechnics_toegang/portaal/<sleutel>`. De medewerker vult voornaam, naam, gsm, e-mail, een eigen code (4 tot 8 cijfers, geen reeksen) en een foto in. Daarna krijgt hij een vaste persoonlijke link; wijzigen vraagt altijd zijn huidige code. Foto's staan in `config/btechnics_toegang/fotos`.
+
+## Acties (enkel beheerders)
+
+`deur_toevoegen`, `deur_wijzigen`, `deur_verwijderen`, `deur_openen`, `modus_zetten`, `persoon_toevoegen`, `tijdelijke_code`, `persoon_wijzigen`, `persoon_blokkeren`, `persoon_deblokkeren`, `persoon_uit_dienst`, `persoon_herstellen`, `persoon_verwijderen`, `overzicht`, `tablet_koppelcode`, `tablet_intrekken`, `uitnodiging_maken`.
 
 ## Endpoints voor de tablets
 

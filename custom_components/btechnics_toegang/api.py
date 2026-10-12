@@ -6,7 +6,6 @@ Daarom staan alle views op requires_auth = False en controleren we de sleutel ze
 from __future__ import annotations
 
 import logging
-import uuid
 from http import HTTPStatus
 from typing import Any
 
@@ -17,7 +16,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.http import KEY_HASS
 from homeassistant.util import dt as dt_util
 
-from .const import API, DOMAIN, EVENT_TOEGANG, LOG_METHODES, LOG_REDENEN, LOG_SOORTEN, MODI, WACHT_MAX
+from .const import API, DOMAIN, LOG_METHODES, MODI, WACHT_MAX
 from .geldigheid import reden_geweigerd
 from .register import Register, ToegangFout
 
@@ -105,24 +104,6 @@ class LijstView(_TabletView):
         return web.json_response(lijst, headers={"ETag": etag})
 
 
-def _log_regel(r: dict, tablet: dict, deur_naam: str) -> dict | None:
-    if not isinstance(r, dict) or not r.get("uid"):
-        return None
-    soort = r.get("soort") if r.get("soort") in LOG_SOORTEN else "systeem"
-    return {
-        "uid": str(r["uid"])[:64],
-        "tijd": str(r.get("tijd") or dt_util.now().isoformat())[:40],
-        "soort": soort,
-        "methode": r.get("methode") if r.get("methode") in LOG_METHODES else None,
-        "reden": r.get("reden") if r.get("reden") in LOG_REDENEN else None,
-        "persoon_id": r.get("persoon_id") or None,
-        "tekst": str(r.get("tekst") or "")[:200],
-        "tablet_id": tablet["id"],
-        "deur_id": tablet["deur_id"],
-        "deur": deur_naam,
-    }
-
-
 class LogView(_TabletView):
     url = f"{API}/log"
     name = f"api:{DOMAIN}:log"
@@ -131,20 +112,11 @@ class LogView(_TabletView):
         tablet = self._tablet(request)
         if not tablet:
             return _fout(HTTPStatus.UNAUTHORIZED, "niet gekoppeld")
-        hass = request.app[KEY_HASS]
-        reg = _reg(hass)
         data = await self._json(request)
         items = data.get("items")
         if not isinstance(items, list):
             return _fout(HTTPStatus.BAD_REQUEST, "items ontbreekt")
-        deur_naam = reg.data["deuren"].get(tablet["deur_id"], {}).get("naam", "")
-        regels = [x for x in (_log_regel(r, tablet, deur_naam) for r in items[:500]) if x]
-        bekend = {r.get("uid") for r in reg.data["log"]}
-        nieuw = [r for r in regels if r["uid"] not in bekend]
-        ontvangen = reg.log_toevoegen(regels)
-        for r in nieuw:
-            p = reg.data["personen"].get(r["persoon_id"] or "")
-            hass.bus.async_fire(EVENT_TOEGANG, {**r, "persoon": p["naam"] if p else None})
+        ontvangen = await request.app[KEY_HASS].data[DOMAIN]["toegang"].async_regels(tablet, items)
         return self.json({"ontvangen": ontvangen})
 
 
@@ -176,21 +148,6 @@ class StatusView(_TabletView):
         return self.json({"ok": True})
 
 
-async def deur_openen(hass: HomeAssistant, deur: dict) -> None:
-    """Zet de schakelaar, het script of de knop aan die voor deze deur gekozen is."""
-    ent = deur.get("open_entiteit")
-    if not ent:
-        raise ToegangFout(f"Voor deur {deur['naam']} is geen schakelaar of script gekozen")
-    domein = ent.split(".")[0]
-    dienst = {
-        "script": ("script", "turn_on"),
-        "lock": ("lock", "unlock"),
-        "button": ("button", "press"),
-        "input_button": ("input_button", "press"),
-    }.get(domein, (domein, "turn_on"))
-    await hass.services.async_call(*dienst, {"entity_id": ent}, blocking=True)
-
-
 class OpenView(_TabletView):
     url = f"{API}/open"
     name = f"api:{DOMAIN}:open"
@@ -201,47 +158,40 @@ class OpenView(_TabletView):
             return _fout(HTTPStatus.UNAUTHORIZED, "niet gekoppeld")
         hass = request.app[KEY_HASS]
         reg = _reg(hass)
+        tg = hass.data[DOMAIN]["toegang"]
         data = await self._json(request)
         methode = data.get("methode") if data.get("methode") in LOG_METHODES else None
         if not methode:
             return _fout(HTTPStatus.BAD_REQUEST, f"methode moet een van {', '.join(LOG_METHODES)} zijn")
-        persoon_id = data.get("persoon_id") or None
         deur = reg.data["deuren"].get(tablet["deur_id"])
         if not deur:
             return _fout(HTTPStatus.NOT_FOUND, "deur bestaat niet meer")
-
+        persoon = reg.data["personen"].get(data.get("persoon_id") or "")
         reden = None
-        persoon = reg.data["personen"].get(persoon_id) if persoon_id else None
         if methode in ("pin", "kaart", "gezicht"):
-            if not persoon or not persoon["actief"] or tablet["deur_id"] not in persoon["deuren"]:
+            if not persoon or tablet["deur_id"] not in persoon["deuren"]:
                 reden = "onbekend"
+            elif persoon["status"] != "active":
+                reden = "verlopen" if persoon["status"] == "retired" else "buiten_schema"
             else:
-                reden = reden_geweigerd(persoon, dt_util.now())
-
-        regel = {
-            "uid": f"ha-{uuid.uuid4()}", "tijd": dt_util.now().replace(microsecond=0).isoformat(),
-            "soort": "toegang" if not reden else "geweigerd", "methode": methode, "reden": reden,
-            "persoon_id": persoon["id"] if persoon else None,
-            "tekst": "Deur geopend via HA" if not reden else f"Openen geweigerd: {reden}",
-            "tablet_id": tablet["id"], "deur_id": deur["id"], "deur": deur["naam"],
-        }
-        if not reden:
-            try:
-                await deur_openen(hass, deur)
-            except ToegangFout as e:
-                reden = "fout"
-                regel.update(soort="fout", tekst=str(e))
-            except Exception as e:  # noqa: BLE001 dienst faalde
-                _LOGGER.error("Deur %s openen mislukt: %s", deur["naam"], e)
-                reden = "fout"
-                regel.update(soort="fout", tekst=f"Openen mislukt: {e}")
-        reg.log_toevoegen([regel])
-        hass.bus.async_fire(EVENT_TOEGANG, {**regel, "persoon": persoon["naam"] if persoon else None})
-        if reden == "fout":
-            return web.json_response({"geopend": False, "reden": "fout", "tekst": regel["tekst"]},
-                                     status=HTTPStatus.BAD_GATEWAY)
+                reden = reden_geweigerd({"schema": persoon["schema"]}, dt_util.now())
+        # De tablet schrijft zelf een logregel; HA registreert enkel wat het zelf besliste als de tablet
+        # daar niet om vraagt (log=false), zodat een toegang niet dubbel in de historiek komt.
+        dubbel = data.get("log") is False
         if reden:
+            if dubbel:
+                await tg.async_registreer(deur, methode=methode, persoon=persoon, opened=False, tekst=f"Openen geweigerd: {reden}")
             return web.json_response({"geopend": False, "reden": reden}, status=HTTPStatus.FORBIDDEN)
+        try:
+            await tg.async_deur_openen(deur)
+        except ToegangFout as e:
+            return web.json_response({"geopend": False, "reden": "fout", "tekst": str(e)}, status=HTTPStatus.BAD_GATEWAY)
+        except Exception as e:  # noqa: BLE001
+            _LOGGER.error("Deur %s openen mislukt: %s", deur["naam"], e)
+            return web.json_response({"geopend": False, "reden": "fout", "tekst": f"Openen mislukt: {e}"},
+                                     status=HTTPStatus.BAD_GATEWAY)
+        if dubbel:
+            await tg.async_registreer(deur, methode=methode, persoon=persoon, opened=True, tekst="Deur geopend via HA")
         return self.json({"geopend": True})
 
 

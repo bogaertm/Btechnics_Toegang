@@ -1,48 +1,252 @@
 deur_toevoegen:
   fields:
-    naam: {required: true, example: Vergaderzaal, selector: {text: {}}}
-    open_entiteit: {example: switch.relais_vergaderzaal, selector: {entity: {domain: [switch, script, lock, button, input_button, input_boolean]}}}
+    naam:
+      required: true
+      selector:
+        text: {}
+    open_entiteit:
+      required: false
+      selector:
+        entity:
+          domain:
+          - switch
+          - script
+          - lock
+          - button
+          - input_button
+          - input_boolean
 deur_wijzigen:
   fields:
-    deur: {required: true, example: Vergaderzaal, selector: {text: {}}}
-    naam: {selector: {text: {}}}
-    open_entiteit: {selector: {entity: {domain: [switch, script, lock, button, input_button, input_boolean]}}}
+    deur:
+      required: true
+      selector:
+        text: {}
+    naam:
+      required: false
+      selector:
+        text: {}
+    open_entiteit:
+      required: false
+      selector:
+        entity:
+          domain:
+          - switch
+          - script
+          - lock
+          - button
+          - input_button
+          - input_boolean
 deur_verwijderen:
   fields:
-    deur: {required: true, selector: {text: {}}}
+    deur:
+      required: true
+      selector:
+        text: {}
 deur_openen:
   fields:
-    deur: {required: true, selector: {text: {}}}
+    deur:
+      required: true
+      selector:
+        text: {}
 modus_zetten:
   fields:
-    deur: {required: true, selector: {text: {}}}
-    modus: {required: true, selector: {select: {options: [open, afwezig, vergadering, niet_storen]}}}
+    deur:
+      required: true
+      selector:
+        text: {}
+    modus:
+      required: true
+      selector:
+        select:
+          options:
+          - open
+          - afwezig
+          - vergadering
+          - niet_storen
 persoon_toevoegen:
   fields:
-    naam: {required: true, example: Jan Peeters, selector: {text: {}}}
-    pincode: {example: "4711", selector: {text: {type: password}}}
-    deuren: {example: "[Vergaderzaal]", selector: {object: {}}}
-    van: {selector: {date: {}}}
-    tot: {selector: {date: {}}}
-    schema: {example: '[{"dagen": [1,2,3,4,5], "van": "08:00", "tot": "18:00"}]', selector: {object: {}}}
+    voornaam:
+      required: false
+      selector:
+        text: {}
+    achternaam:
+      required: false
+      selector:
+        text: {}
+    naam:
+      required: false
+      selector:
+        text: {}
+    pincode:
+      required: false
+      selector:
+        text:
+          type: password
+    deuren:
+      required: true
+      selector:
+        object: {}
+    geldig_van:
+      required: false
+      selector:
+        datetime: {}
+    geldig_tot:
+      required: false
+      selector:
+        datetime: {}
+    schema:
+      required: false
+      selector:
+        object: {}
+    telefoon:
+      required: false
+      selector:
+        text: {}
+    email:
+      required: false
+      selector:
+        text: {}
+tijdelijke_code:
+  fields:
+    naam:
+      required: true
+      selector:
+        text: {}
+    deuren:
+      required: true
+      selector:
+        object: {}
+    geldig_van:
+      required: false
+      selector:
+        datetime: {}
+    geldig_tot:
+      required: true
+      selector:
+        datetime: {}
 persoon_wijzigen:
   fields:
-    persoon: {required: true, selector: {text: {}}}
-    nieuwe_naam: {selector: {text: {}}}
-    pincode: {selector: {text: {type: password}}}
-    deuren: {selector: {object: {}}}
-    van: {selector: {date: {}}}
-    tot: {selector: {date: {}}}
-    schema: {selector: {object: {}}}
-    actief: {selector: {boolean: {}}}
+    persoon:
+      required: true
+      selector:
+        text: {}
+    nieuwe_naam:
+      required: false
+      selector:
+        text: {}
+    voornaam:
+      required: false
+      selector:
+        text: {}
+    achternaam:
+      required: false
+      selector:
+        text: {}
+    pincode:
+      required: false
+      selector:
+        text:
+          type: password
+    deuren:
+      required: false
+      selector:
+        object: {}
+    geldig_van:
+      required: false
+      selector:
+        datetime: {}
+    geldig_tot:
+      required: false
+      selector:
+        datetime: {}
+    schema:
+      required: false
+      selector:
+        object: {}
+    telefoon:
+      required: false
+      selector:
+        text: {}
+    email:
+      required: false
+      selector:
+        text: {}
+persoon_blokkeren:
+  fields:
+    persoon:
+      required: true
+      selector:
+        text: {}
+    tot:
+      required: false
+      selector:
+        datetime: {}
+persoon_deblokkeren:
+  fields:
+    persoon:
+      required: true
+      selector:
+        text: {}
+persoon_uit_dienst:
+  fields:
+    persoon:
+      required: true
+      selector:
+        text: {}
+persoon_herstellen:
+  fields:
+    persoon:
+      required: true
+      selector:
+        text: {}
 persoon_verwijderen:
   fields:
-    persoon: {required: true, selector: {text: {}}}
+    persoon:
+      required: true
+      selector:
+        text: {}
 overzicht: {}
 tablet_koppelcode:
   fields:
-    deur: {required: true, selector: {text: {}}}
-    naam: {example: Tablet vergaderzaal, selector: {text: {}}}
+    deur:
+      required: true
+      selector:
+        text: {}
+    naam:
+      required: false
+      selector:
+        text: {}
 tablet_intrekken:
   fields:
-    tablet: {required: true, selector: {text: {}}}
+    tablet:
+      required: true
+      selector:
+        text: {}
+uitnodiging_maken:
+  fields:
+    deuren:
+      required: true
+      selector:
+        object: {}
+    naam:
+      required: false
+      selector:
+        text: {}
+    geldig_van:
+      required: false
+      selector:
+        datetime: {}
+    geldig_tot:
+      required: false
+      selector:
+        datetime: {}
+    schema:
+      required: false
+      selector:
+        object: {}
+    dagen:
+      required: false
+      selector:
+        number:
+          min: 1
+          max: 30

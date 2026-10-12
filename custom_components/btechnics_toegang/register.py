@@ -1,10 +1,19 @@
-"""Register: personen, deuren, tablets, koppelcodes en logboek, bewaard in .storage van HA."""
+"""Register: personen (codes), deuren, tablets, uitnodigingen, wijzigingen en tabletmeldingen.
+
+Statussen en geldigheid werken zoals in Btechnics VTO (Trefpunt):
+  active   werkt op de tablets
+  blocked  tijdelijk niet, tot `until` of tot deblokkeren; "wacht op begin" als until == valid_from
+  retired  uit dienst, bewaard en herstelbaar
+Een planner kijkt elke minuut: einde geldigheid = uit dienst, einde blokkering of begin geldigheid = actief.
+Enkel personen met status active staan in de lijst voor de tablets.
+"""
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import secrets
 import time
-from datetime import date
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from homeassistant.core import HomeAssistant, callback
@@ -13,15 +22,19 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    AUDIT_MAX,
+    GEBEURTENISSEN_MAX,
     KOPPELCODE_GELDIG,
     KOPPELCODE_POGINGEN,
-    LOG_KEEP,
     MODI,
     MODUS_STANDAARD,
+    PIN_MAX,
     PIN_MIN,
+    PORTAAL_FOUTEN_MAX,
     SIGNAL_UPDATE,
     STORAGE_KEY,
     STORAGE_VERSION,
+    UITNODIGING_DAGEN,
 )
 from .geldigheid import controleer_blok
 from .hashing import hash_waarde, kaart_norm, pin_norm, sleutel_hash, zout
@@ -35,8 +48,48 @@ def _id(prefix: str) -> str:
     return f"{prefix}_{secrets.token_hex(3)}"
 
 
-def _nu_iso() -> str:
-    return dt_util.now().replace(microsecond=0).isoformat()
+def _nu() -> datetime:
+    return dt_util.now().replace(microsecond=0)
+
+
+def _iso(t: datetime | None) -> str | None:
+    return dt_util.as_local(t).replace(microsecond=0).isoformat() if t else None
+
+
+def tijdstip(v: Any) -> datetime | None:
+    """Tijdstip uit tekst of datetime; zonder tijdzone = tijdzone van Home Assistant."""
+    if v in (None, ""):
+        return None
+    if isinstance(v, datetime):
+        t = v
+    else:
+        t = dt_util.parse_datetime(str(v))
+        if t is None:
+            try:
+                d = date.fromisoformat(str(v))
+            except ValueError as e:
+                raise ToegangFout(f"ongeldig tijdstip: {v}") from e
+            t = datetime(d.year, d.month, d.day)
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=dt_util.get_default_time_zone())
+    return dt_util.as_local(t)
+
+
+def _kort(t: datetime | str | None) -> str:
+    t = tijdstip(t) if not isinstance(t, datetime) else t
+    return t.strftime("%d/%m/%Y %H:%M") if t else ""
+
+
+def zwak(code: str) -> bool:
+    """Makkelijk te raden (zelfde regels als Btechnics VTO)."""
+    d = [int(c) for c in code]
+    stappen = {d[i + 1] - d[i] for i in range(len(d) - 1)}
+    return (len(set(d)) <= 2 or stappen in ({1}, {-1}, {0})
+            or code[:2] * (len(code) // 2) == code or code[:3] * 2 == code or code[:3] == code[3:][::-1])
+
+
+def token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
 
 
 class Register:
@@ -44,23 +97,44 @@ class Register:
         self.hass = hass
         self._store: Store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
         self.data: dict[str, Any] = {}
-        self._koppelcodes: dict[str, dict] = {}   # enkel in geheugen, 10 minuten geldig
+        self._koppelcodes: dict[str, dict] = {}
         self._foute_koppelpogingen = 0
         self._wijziging = asyncio.Condition()
-        self.bij_nieuwe_tablet = None   # gezet door __init__: entiteiten herladen
+        self.bij_nieuwe_tablet = None
+        self.bij_toegang = None          # callback(regel) naar het archief
 
-    # ---------- opslag ----------
+    # ------------------------------------------------------------------ opslag
 
     async def async_laden(self) -> None:
         data = await self._store.async_load() or {}
-        data.setdefault("versie", 1)
-        data.setdefault("personen", {})
-        data.setdefault("deuren", {})
-        data.setdefault("tablets", {})
-        data.setdefault("log", [])
+        for k, v in (("versie", 1), ("personen", {}), ("deuren", {}), ("tablets", {}), ("audit", []),
+                     ("gebeurtenissen", []), ("uitnodigingen", {})):
+            data.setdefault(k, v)
+        oud_log = data.pop("log", None)
         for t in data["tablets"].values():
-            t.pop("laatst_mono", None)   # monotone klok begint opnieuw na een herstart
+            t.pop("laatst_mono", None)
+        for p in data["personen"].values():
+            self._migreer(p)
         self.data = data
+        self._oud_log = oud_log or []
+
+    @staticmethod
+    def _migreer(p: dict) -> None:
+        """Personen van v0.2 en v0.3 (actief, van/tot als datum) naar het model van v0.4."""
+        if "status" not in p:
+            p["status"] = "active" if p.pop("actief", True) else "blocked"
+            p.setdefault("until", None)
+        for oud, nieuw, uur in (("van", "valid_from", (0, 0)), ("tot", "valid_until", (23, 59))):
+            if oud in p:
+                v = p.pop(oud)
+                if v and not p.get(nieuw):
+                    d = date.fromisoformat(v)
+                    p[nieuw] = _iso(datetime(d.year, d.month, d.day, *uur, tzinfo=dt_util.get_default_time_zone()))
+        for k, v in (("valid_from", None), ("valid_until", None), ("until", None), ("soort", "vast"),
+                     ("voornaam", ""), ("achternaam", ""), ("telefoon", ""), ("email", ""), ("foto", False),
+                     ("owner", None), ("bron", "ha"), ("schema", []), ("kaarten", []), ("portaal_hash", None)):
+            p.setdefault(k, v)
+        p.setdefault("gewijzigd", p.get("gemaakt"))
 
     @callback
     def _bewaar(self) -> None:
@@ -68,7 +142,6 @@ class Register:
 
     @callback
     def gewijzigd(self, lijst_veranderd: bool = True) -> None:
-        """Bewaren, entiteiten bijwerken en wachtende tablets wekken."""
         if lijst_veranderd:
             self.data["versie"] += 1
         self._bewaar()
@@ -80,14 +153,11 @@ class Register:
             self._wijziging.notify_all()
 
     async def wacht_op_versie(self, versie: int, max_s: float) -> bool:
-        """True zodra de versie verschilt van wat de tablet kent, False na max_s seconden."""
         if self.data["versie"] != versie:
             return True
         try:
             async with self._wijziging:
-                await asyncio.wait_for(
-                    self._wijziging.wait_for(lambda: self.data["versie"] != versie), max_s
-                )
+                await asyncio.wait_for(self._wijziging.wait_for(lambda: self.data["versie"] != versie), max_s)
             return True
         except asyncio.TimeoutError:
             return False
@@ -96,7 +166,16 @@ class Register:
     def versie(self) -> int:
         return self.data["versie"]
 
-    # ---------- deuren ----------
+    # ------------------------------------------------------------------ wijzigingen
+
+    def audit(self, wie: str, actie: str, naam: str, deuren: list[str] | None = None, detail: str = "",
+              soort: str = "code") -> None:
+        namen = [self.data["deuren"].get(d, {}).get("naam", d) for d in (deuren or [])]
+        self.data["audit"].append({"ts": _iso(_nu()), "user": wie or "automatisch", "action": actie, "kind": soort,
+                                   "name": naam, "doors": namen, "detail": detail})
+        del self.data["audit"][:-AUDIT_MAX]
+
+    # ------------------------------------------------------------------ deuren
 
     def deur(self, deur_id: str) -> dict:
         d = self.data["deuren"].get(deur_id)
@@ -110,178 +189,377 @@ class Register:
         for d in self.data["deuren"].values():
             if d["naam"].lower() == str(naam_of_id).strip().lower():
                 return d
-        raise ToegangFout(f"Deur {naam_of_id} bestaat niet")
+        raise ToegangFout(f"onbekende deur: {naam_of_id}")
 
-    def deur_toevoegen(self, naam: str, open_entiteit: str | None = None) -> dict:
+    def deur_toevoegen(self, naam: str, open_entiteit: str | None = None, wie: str = "") -> dict:
         naam = naam.strip()
         if not naam:
             raise ToegangFout("Geef de deur een naam")
         if any(d["naam"].lower() == naam.lower() for d in self.data["deuren"].values()):
             raise ToegangFout(f"Er bestaat al een deur {naam}")
-        d = {
-            "id": _id("d"), "naam": naam, "open_entiteit": open_entiteit or None,
-            "modus": MODUS_STANDAARD, "modus_sinds": _nu_iso(), "modus_door": "ha",
-        }
+        d = {"id": _id("d"), "naam": naam, "open_entiteit": open_entiteit or None,
+             "modus": MODUS_STANDAARD, "modus_sinds": _iso(_nu()), "modus_door": "ha"}
         self.data["deuren"][d["id"]] = d
+        self.audit(wie, "toegevoegd", naam, soort="deur")
         self.gewijzigd()
         return d
 
-    def deur_wijzigen(self, deur_id: str, naam: str | None = None, open_entiteit: str | None = None) -> dict:
+    def deur_wijzigen(self, deur_id: str, naam: str | None = None, open_entiteit: str | None = None, wie: str = "") -> dict:
         d = self.deur(deur_id)
-        if naam is not None and naam.strip():
+        detail = []
+        if naam is not None and naam.strip() and naam.strip() != d["naam"]:
+            detail.append(f"naam {d['naam']} naar {naam.strip()}")
             d["naam"] = naam.strip()
-        if open_entiteit is not None:
+        if open_entiteit is not None and (open_entiteit or None) != d.get("open_entiteit"):
             d["open_entiteit"] = open_entiteit or None
+            detail.append(f"openen met {open_entiteit or 'niets'}")
+        if detail:
+            self.audit(wie, "aangepast", d["naam"], soort="deur", detail=", ".join(detail))
         self.gewijzigd()
         return d
 
-    def deur_verwijderen(self, deur_id: str) -> None:
-        self.deur(deur_id)
+    def deur_verwijderen(self, deur_id: str, wie: str = "") -> None:
+        d = self.deur(deur_id)
         if any(t["deur_id"] == deur_id for t in self.data["tablets"].values()):
-            raise ToegangFout("Er is nog een tablet aan deze deur gekoppeld. Trek die eerst in.")
+            raise ToegangFout("Er is nog een tablet aan deze deur gekoppeld. Ontkoppel die eerst.")
         del self.data["deuren"][deur_id]
         for p in self.data["personen"].values():
             if deur_id in p["deuren"]:
                 p["deuren"].remove(deur_id)
+        self.audit(wie, "verwijderd", d["naam"], soort="deur")
         self.gewijzigd()
 
     def modus_zetten(self, deur_id: str, modus: str, door: str) -> dict:
         if modus not in MODI:
             raise ToegangFout(f"Onbekende modus {modus}, kies uit {', '.join(MODI)}")
         d = self.deur(deur_id)
-        d["modus"], d["modus_sinds"], d["modus_door"] = modus, _nu_iso(), door
+        d["modus"], d["modus_sinds"], d["modus_door"] = modus, _iso(_nu()), door
         self.gewijzigd()
         return d
 
-    # ---------- personen ----------
+    # ------------------------------------------------------------------ personen: hulp
 
     def persoon(self, persoon_id: str) -> dict:
         p = self.data["personen"].get(persoon_id)
         if not p:
-            raise ToegangFout(f"Persoon {persoon_id} bestaat niet")
+            raise ToegangFout("onbekende code")
         return p
 
     def persoon_op_naam(self, naam_of_id: str) -> dict:
         if naam_of_id in self.data["personen"]:
             return self.data["personen"][naam_of_id]
-        gevonden = [p for p in self.data["personen"].values() if p["naam"].lower() == str(naam_of_id).strip().lower()]
-        if len(gevonden) == 1:
-            return gevonden[0]
-        if len(gevonden) > 1:
+        hits = [p for p in self.data["personen"].values() if p["naam"].lower() == str(naam_of_id).strip().lower()]
+        if len(hits) == 1:
+            return hits[0]
+        if len(hits) > 1:
             raise ToegangFout(f"Meerdere personen heten {naam_of_id}, gebruik het id")
         raise ToegangFout(f"Persoon {naam_of_id} bestaat niet")
 
-    def _controleer_pin(self, pin: str, behalve: str | None = None) -> str:
+    def _pins(self, behalve: str | None = None) -> set[str]:
+        return {p["pin"] for p in self.data["personen"].values() if p.get("pin") and p["id"] != behalve}
+
+    def controleer_pin(self, pin: str, behalve: str | None = None, streng: bool = False) -> str:
+        """streng (portaal): ook zwakke codes weigeren, en één algemene melding zodat niemand kan
+        afleiden welke codes van anderen zijn."""
         pin = pin_norm(pin)
-        if len(pin) < PIN_MIN:
-            raise ToegangFout(f"Een pincode heeft minstens {PIN_MIN} cijfers")
+        if not (PIN_MIN <= len(pin) <= PIN_MAX):
+            raise ToegangFout(f"Een code heeft {PIN_MIN} tot {PIN_MAX} cijfers.")
+        if streng and (zwak(pin) or pin in self._pins(behalve)):
+            raise ToegangFout("Deze code kan niet gebruikt worden. Kies een andere, minder voor de hand liggende code.")
         for p in self.data["personen"].values():
             if p["id"] != behalve and p.get("pin") == pin:
-                raise ToegangFout(f"Deze pincode is al in gebruik bij {p['naam']}")
+                st = {"blocked": " (geblokkeerd)", "retired": " (uit dienst)"}.get(p["status"], "")
+                raise ToegangFout(f"code is in gebruik bij {p['naam']}{st}")
         return pin
 
-    def _deuren_ids(self, deuren: list[str] | None) -> list[str]:
-        return [self.deur_op_naam(x)["id"] for x in (deuren or [])]
+    def nieuwe_code(self, lengte: int = 6) -> str:
+        bezet = self._pins()
+        for _ in range(1000):
+            c = "".join(secrets.choice("0123456789") for _ in range(lengte))
+            if c not in bezet and not zwak(c):
+                return c
+        raise ToegangFout("kon geen vrije code maken")
 
-    @staticmethod
-    def _datum(s: Any) -> str | None:
-        if s in (None, ""):
-            return None
-        return date.fromisoformat(str(s)).isoformat()
+    def _deuren_ids(self, deuren: list[str] | None) -> list[str]:
+        uit = []
+        for x in deuren or []:
+            i = self.deur_op_naam(x)["id"]
+            if i not in uit:
+                uit.append(i)
+        return uit
 
     def _schema(self, schema: Any) -> list[dict]:
         try:
             return [controleer_blok(b) for b in (schema or [])]
         except ValueError as e:
-            raise ToegangFout(f"Schema klopt niet: {e}") from e
+            raise ToegangFout(f"Toegangsuren kloppen niet: {e}") from e
 
-    def persoon_toevoegen(self, naam: str, pin: str | None, deuren: list[str] | None,
-                          van: Any = None, tot: Any = None, schema: Any = None) -> dict:
-        naam = naam.strip()
-        if not naam:
-            raise ToegangFout("Geef de persoon een naam")
-        p = {
-            "id": _id("p"), "naam": naam, "actief": True,
-            "pin": self._controleer_pin(pin) if pin else None,
-            "pin_zout": zout(), "kaarten": [],
-            "deuren": self._deuren_ids(deuren),
-            "van": self._datum(van), "tot": self._datum(tot), "schema": self._schema(schema),
-            "gemaakt": _nu_iso(),
-        }
-        p["pin_hash"] = hash_waarde(p["pin_zout"], p["pin"]) if p["pin"] else None
+    @staticmethod
+    def wacht(p: dict) -> bool:
+        return p["status"] == "blocked" and bool(p.get("valid_from")) and p.get("until") == p.get("valid_from")
+
+    def _uniek(self, naam: str) -> str:
+        bestaand = {p["naam"].casefold() for p in self.data["personen"].values()}
+        if naam.casefold() not in bestaand:
+            return naam
+        n = 2
+        while f"{naam} ({n})".casefold() in bestaand:
+            n += 1
+        return f"{naam} ({n})"
+
+    @staticmethod
+    def _naam(voornaam: str, achternaam: str, naam: str | None) -> str:
+        samen = f"{(voornaam or '').strip()} {(achternaam or '').strip()}".strip()
+        return samen or (naam or "").strip()
+
+    @staticmethod
+    def geldig_detail(p: dict) -> str:
+        vf, vu = p.get("valid_from"), p.get("valid_until")
+        if vf and vu:
+            return f"geldig van {_kort(vf)} tot {_kort(vu)}"
+        if vf:
+            return f"geldig vanaf {_kort(vf)}"
+        if vu:
+            return f"geldig tot {_kort(vu)}"
+        return "altijd geldig"
+
+    def _pin_zetten(self, p: dict, pin: str | None) -> None:
+        p["pin"] = pin or None
+        p["pin_zout"] = zout()
+        p["pin_hash"] = hash_waarde(p["pin_zout"], pin) if pin else None
+
+    # ------------------------------------------------------------------ personen: acties
+
+    def toevoegen(self, wie: str, *, naam: str = "", voornaam: str = "", achternaam: str = "", pin: str | None = None,
+                  deuren: list[str] | None = None, valid_from: Any = None, valid_until: Any = None, schema: Any = None,
+                  telefoon: str = "", email: str = "", soort: str | None = None, owner: str | None = None,
+                  owner_limit: int | None = None, bron: str = "ha", streng: bool = False) -> dict:
+        volledig = self._naam(voornaam, achternaam, naam)
+        if not volledig:
+            raise ToegangFout("naam mag niet leeg zijn")
+        ids = self._deuren_ids(deuren)
+        if not ids:
+            raise ToegangFout("kies minstens een deur")
+        nu = _nu()
+        vf, vu = tijdstip(valid_from), tijdstip(valid_until)
+        if vu and vu <= nu:
+            raise ToegangFout("het einde van de geldigheid ligt in het verleden")
+        if vf and vu and vu <= vf:
+            raise ToegangFout("het einde van de geldigheid moet na het begin liggen")
+        if vf and vf <= nu:
+            vf = None
+        if owner and owner_limit is not None:
+            actief = sum(1 for q in self.data["personen"].values() if q.get("owner") == owner and q["status"] != "retired")
+            if actief >= owner_limit:
+                raise ToegangFout(f"je hebt al {owner_limit} actieve tijdelijke codes; stop er eerst een")
+        code = self.controleer_pin(pin, streng=streng) if pin else self.nieuwe_code()
+        tijdelijk = soort == "tijdelijk" or (soort is None and not pin)
+        if tijdelijk or owner:
+            volledig = self._uniek(volledig)
+        p = {"id": _id("p"), "naam": volledig, "voornaam": (voornaam or "").strip(), "achternaam": (achternaam or "").strip(),
+             "soort": "tijdelijk" if tijdelijk else "vast", "status": "active", "until": None,
+             "valid_from": _iso(vf), "valid_until": _iso(vu), "deuren": ids, "schema": self._schema(schema),
+             "telefoon": (telefoon or "").strip(), "email": (email or "").strip(), "foto": False, "kaarten": [],
+             "owner": owner, "bron": bron, "portaal_hash": None, "gemaakt": _iso(nu), "gewijzigd": _iso(nu)}
+        self._pin_zetten(p, code)
+        if vf:
+            p["status"], p["until"] = "blocked", p["valid_from"]
         self.data["personen"][p["id"]] = p
+        self.audit(wie, "toegevoegd", p["naam"], ids, self.geldig_detail(p) if (vf or vu) else "")
         self.gewijzigd()
         return p
 
-    def persoon_wijzigen(self, persoon_id: str, **v: Any) -> dict:
-        p = self.persoon(persoon_id)
-        if v.get("naam"):
-            p["naam"] = v["naam"].strip()
-        if "pin" in v and v["pin"] is not None:
-            if v["pin"] == "":
-                p["pin"], p["pin_hash"] = None, None
-            else:
-                p["pin"] = self._controleer_pin(v["pin"], behalve=p["id"])
-                p["pin_zout"] = zout()
-                p["pin_hash"] = hash_waarde(p["pin_zout"], p["pin"])
-        if v.get("deuren") is not None:
-            p["deuren"] = self._deuren_ids(v["deuren"])
-        if "van" in v:
-            p["van"] = self._datum(v["van"])
-        if "tot" in v:
-            p["tot"] = self._datum(v["tot"])
-        if v.get("schema") is not None:
-            p["schema"] = self._schema(v["schema"])
-        if v.get("actief") is not None:
-            p["actief"] = bool(v["actief"])
+    def bijwerken(self, wie: str, pid: str, *, naam: str | None = None, voornaam: str | None = None,
+                  achternaam: str | None = None, pin: str | None = None, deuren: list[str] | None = None,
+                  schema: Any = None, telefoon: str | None = None, email: str | None = None) -> dict:
+        p = self.persoon(pid)
+        detail = []
+        if voornaam is not None or achternaam is not None:
+            p["voornaam"] = (voornaam if voornaam is not None else p["voornaam"]).strip()
+            p["achternaam"] = (achternaam if achternaam is not None else p["achternaam"]).strip()
+            naam = self._naam(p["voornaam"], p["achternaam"], naam or p["naam"])
+        if naam is not None and naam.strip() and naam.strip() != p["naam"]:
+            detail.append(f"naam {p['naam']} naar {naam.strip()}")
+            p["naam"] = naam.strip()
+        if pin:
+            nieuw = self.controleer_pin(pin, behalve=pid)
+            if nieuw != p.get("pin"):
+                self._pin_zetten(p, nieuw)
+                detail.append("code gewijzigd")
+        if deuren is not None:
+            if p["status"] == "retired":
+                raise ToegangFout("deuren aanpassen kan pas na herstellen")
+            ids = self._deuren_ids(deuren)
+            if not ids:
+                raise ToegangFout("minstens één deur nodig; gebruik Uit dienst om de code overal weg te halen")
+            if sorted(ids) != sorted(p["deuren"]):
+                p["deuren"] = ids
+                detail.append("deuren: " + ", ".join(self.data["deuren"][i]["naam"] for i in ids))
+        if schema is not None:
+            s = self._schema(schema)
+            if s != p["schema"]:
+                p["schema"] = s
+                detail.append("toegangsuren gewijzigd")
+        if telefoon is not None and telefoon.strip() != p.get("telefoon", ""):
+            p["telefoon"] = telefoon.strip()
+            detail.append("telefoon gewijzigd")
+        if email is not None and email.strip() != p.get("email", ""):
+            p["email"] = email.strip()
+            detail.append("e-mail gewijzigd")
+        if detail:
+            p["gewijzigd"] = _iso(_nu())
+            self.audit(wie, "aangepast", p["naam"], p["deuren"], ", ".join(detail))
+            self.gewijzigd()
+        return p
+
+    def geldigheid(self, wie: str, pid: str, valid_from: Any = None, valid_until: Any = None) -> dict:
+        p = self.persoon(pid)
+        if p["status"] == "retired":
+            raise ToegangFout(f"'{p['naam']}' is uit dienst: eerst herstellen")
+        nu = _nu()
+        vf, vu = tijdstip(valid_from), tijdstip(valid_until)
+        oud_vu = tijdstip(p.get("valid_until"))
+        if vu and vu <= nu and vu != oud_vu:
+            raise ToegangFout("het einde van de geldigheid ligt in het verleden")
+        if vf and vu and vu <= vf:
+            raise ToegangFout("het einde van de geldigheid moet na het begin liggen")
+        if vf and vf <= nu:
+            vf = None
+        wachtte = self.wacht(p)
+        p["valid_from"], p["valid_until"] = _iso(vf), _iso(vu)
+        actie = "geldigheid ingesteld"
+        if vf:
+            if p["status"] == "active" or wachtte:
+                p["status"], p["until"] = "blocked", p["valid_from"]
+            elif p["status"] == "blocked" and p.get("until") and tijdstip(p["until"]) < vf:
+                p["until"] = p["valid_from"]
+        elif wachtte:
+            p["status"], p["until"] = "active", None
+            actie = "geldig vanaf nu"
+        p["gewijzigd"] = _iso(nu)
+        self.audit(wie, actie, p["naam"], p["deuren"], self.geldig_detail(p))
         self.gewijzigd()
         return p
 
-    def persoon_verwijderen(self, persoon_id: str) -> None:
-        self.persoon(persoon_id)
-        del self.data["personen"][persoon_id]
+    def blokkeren(self, wie: str, pid: str, until: Any = None) -> dict:
+        p = self.persoon(pid)
+        if p["status"] == "retired":
+            raise ToegangFout(f"'{p['naam']}' is uit dienst: eerst herstellen")
+        u = tijdstip(until)
+        if u and u <= _nu():
+            raise ToegangFout("het einde van de blokkering ligt in het verleden")
+        al = p["status"] == "blocked"
+        p["status"], p["until"] = "blocked", _iso(u)
+        p["gewijzigd"] = _iso(_nu())
+        self.audit(wie, "blokkering aangepast" if al else "geblokkeerd", p["naam"], p["deuren"],
+                   f"tot {_kort(u)}" if u else "tot deblokkeren")
+        self.gewijzigd()
+        return p
+
+    def deblokkeren(self, wie: str, pid: str, actie: str = "gedeblokkeerd", respect_start: bool = False) -> dict:
+        p = self.persoon(pid)
+        nu = _nu()
+        vf = tijdstip(p.get("valid_from"))
+        if respect_start and vf and vf > nu:
+            p["status"], p["until"] = "blocked", p["valid_from"]
+            self.audit(wie, actie, p["naam"], p["deuren"], f"wacht op het begin, tot {_kort(vf)}")
+        else:
+            p["valid_from"] = None
+            vu = tijdstip(p.get("valid_until"))
+            if vu and vu <= nu:
+                p["valid_until"] = None
+            p["status"], p["until"] = "active", None
+            self.audit(wie, actie, p["naam"], p["deuren"])
+        p["gewijzigd"] = _iso(nu)
+        self.gewijzigd()
+        return p
+
+    def uit_dienst(self, wie: str, pid: str, reden: str = "") -> dict:
+        p = self.persoon(pid)
+        p["status"], p["until"] = "retired", None
+        p["gewijzigd"] = _iso(_nu())
+        self.audit(wie, "uit dienst", p["naam"], p["deuren"], reden)
+        self.gewijzigd()
+        return p
+
+    def herstellen(self, wie: str, pid: str) -> dict:
+        return self.deblokkeren(wie, pid, actie="hersteld", respect_start=True)
+
+    def vergeten(self, wie: str, pid: str) -> None:
+        p = self.persoon(pid)
+        if p["status"] != "retired":
+            raise ToegangFout("enkel wat uit dienst is, kan uit de lijst")
+        del self.data["personen"][pid]
+        self.audit(wie, "definitief verwijderd", p["naam"], p["deuren"])
         self.gewijzigd()
 
-    def kaart_toevoegen(self, persoon_id: str, kaart: str) -> None:
-        p = self.persoon(persoon_id)
+    def verwijderen(self, wie: str, pid: str) -> None:
+        p = self.persoon(pid)
+        del self.data["personen"][pid]
+        self.audit(wie, "verwijderd", p["naam"], p["deuren"])
+        self.gewijzigd()
+
+    def kaart_toevoegen(self, wie: str, pid: str, kaart: str) -> None:
+        p = self.persoon(pid)
         nr = kaart_norm(kaart)
-        if len(nr) < 4:
-            raise ToegangFout("Kaartnummer te kort")
+        if not 4 <= len(nr) <= 16:
+            raise ToegangFout("badgenummer: 4 tot 16 tekens 0-9 en A-F")
         for q in self.data["personen"].values():
             if any(k["nr"] == nr for k in q["kaarten"]):
-                raise ToegangFout(f"Deze kaart is al gekoppeld aan {q['naam']}")
+                raise ToegangFout(f"badge {nr} is al gekend bij {q['naam']}")
         z = zout()
         p["kaarten"].append({"nr": nr, "zout": z, "hash": hash_waarde(z, nr)})
+        self.audit(wie, "aangepast", p["naam"], p["deuren"], "badge toegevoegd", soort="badge")
         self.gewijzigd()
 
-    # ---------- lijst voor een tablet ----------
+    # ------------------------------------------------------------------ planner
+
+    def planner(self) -> list[str]:
+        """Elke minuut: einde geldigheid, einde blokkering en begin geldigheid. Geeft wat gebeurde."""
+        nu = _nu()
+        gedaan = []
+        for p in list(self.data["personen"].values()):
+            vu = tijdstip(p.get("valid_until"))
+            if vu and vu <= nu and p["status"] != "retired":
+                self.uit_dienst("planner", p["id"], f"einde geldigheid {_kort(vu)}")
+                gedaan.append(f"{p['naam']}: uit dienst")
+                continue
+            u = tijdstip(p.get("until"))
+            if p["status"] == "blocked" and u and u <= nu:
+                actie = "begin geldigheid" if p.get("until") == p.get("valid_from") else "automatisch gedeblokkeerd"
+                self.deblokkeren("planner", p["id"], actie=actie, respect_start=True)
+                gedaan.append(f"{p['naam']}: {actie}")
+        # vervallen uitnodigingen opruimen (30 dagen na het verlopen)
+        grens = _iso(nu - timedelta(days=30))
+        for i, u in list(self.data["uitnodigingen"].items()):
+            if (u.get("verloopt") or "") < grens:
+                del self.data["uitnodigingen"][i]
+        return gedaan
+
+    # ------------------------------------------------------------------ lijst voor een tablet
 
     def lijst_voor_deur(self, deur_id: str) -> dict:
         d = self.deur(deur_id)
         personen = []
         for p in self.data["personen"].values():
-            if not p["actief"] or deur_id not in p["deuren"]:
+            if p["status"] != "active" or deur_id not in p["deuren"]:
                 continue
+            vf, vu = tijdstip(p.get("valid_from")), tijdstip(p.get("valid_until"))
             personen.append({
                 "id": p["id"], "naam": p["naam"],
-                "van": p["van"], "tot": p["tot"], "schema": p["schema"],
-                "pin": ({"zout": p["pin_zout"], "hash": p["pin_hash"], "lengte": len(p["pin"])}
-                        if p.get("pin") else None),
+                "van": vf.date().isoformat() if vf else None, "tot": vu.date().isoformat() if vu else None,
+                "geldig_van": p.get("valid_from"), "geldig_tot": p.get("valid_until"),
+                "schema": p["schema"],
+                "pin": {"zout": p["pin_zout"], "hash": p["pin_hash"], "lengte": len(p["pin"])} if p.get("pin") else None,
                 "kaarten": [{"zout": k["zout"], "hash": k["hash"]} for k in p["kaarten"]],
                 "gezicht": False,
             })
         personen.sort(key=lambda x: x["naam"].lower())
-        return {
-            "schema": 1,
-            "versie": self.versie,
-            "gemaakt": _nu_iso(),
-            "deur": {k: d[k] for k in ("id", "naam", "modus", "modus_sinds", "modus_door")},
-            "hash": {"algoritme": "sha256-iter", "rondes": 2000},
-            "gezicht_kdf": None,
-            "personen": personen,
-        }
+        return {"schema": 1, "versie": self.versie, "gemaakt": _iso(_nu()),
+                "deur": {k: d[k] for k in ("id", "naam", "modus", "modus_sinds", "modus_door")},
+                "hash": {"algoritme": "sha256-iter", "rondes": 2000}, "gezicht_kdf": None, "personen": personen}
 
-    # ---------- tablets ----------
+    # ------------------------------------------------------------------ tablets
 
     def koppelcode_maken(self, deur_id: str, naam: str | None = None) -> str:
         self.deur(deur_id)
@@ -305,18 +583,15 @@ class Register:
                 self._foute_koppelpogingen = 0
             raise ToegangFout("Koppelcode ongeldig of vervallen")
         del self._koppelcodes[code]
-        # Zelfde toestel opnieuw gekoppeld: de oude sleutel vervalt
         for tid, t in list(self.data["tablets"].items()):
             if toestel_id and t.get("toestel_id") == toestel_id:
                 del self.data["tablets"][tid]
         sleutel = secrets.token_urlsafe(32)
-        t = {
-            "id": _id("t"), "deur_id": info["deur_id"],
-            "naam": (naam or info["naam"] or "Tablet").strip(),
-            "toestel_id": toestel_id or None, "sleutel_hash": sleutel_hash(sleutel),
-            "gekoppeld": _nu_iso(), "app_versie": app_versie, "status": {}, "laatst": None,
-        }
+        t = {"id": _id("t"), "deur_id": info["deur_id"], "naam": (naam or info["naam"] or "Tablet").strip(),
+             "toestel_id": toestel_id or None, "sleutel_hash": sleutel_hash(sleutel), "gekoppeld": _iso(_nu()),
+             "app_versie": app_versie, "status": {}, "laatst": None}
         self.data["tablets"][t["id"]] = t
+        self.audit("tablet", "tablet gekoppeld", self.data["deuren"][t["deur_id"]]["naam"], soort="deur", detail=t["naam"])
         self.gewijzigd(lijst_veranderd=False)
         if self.bij_nieuwe_tablet:
             self.bij_nieuwe_tablet()
@@ -329,37 +604,138 @@ class Register:
                 return t
         return None
 
-    def tablet_intrekken(self, tablet_id: str) -> None:
-        if tablet_id not in self.data["tablets"]:
+    def tablet_intrekken(self, tablet_id: str, wie: str = "") -> None:
+        t = self.data["tablets"].get(tablet_id)
+        if not t:
             raise ToegangFout(f"Tablet {tablet_id} bestaat niet")
         del self.data["tablets"][tablet_id]
+        self.audit(wie, "tablet ontkoppeld", self.data["deuren"].get(t["deur_id"], {}).get("naam", "?"), soort="deur", detail=t["naam"])
         self.gewijzigd(lijst_veranderd=False)
 
     def tablet_status(self, tablet: dict, status: dict) -> None:
-        tablet["status"] = {k: status.get(k) for k in
-                            ("app_versie", "version_code", "versie", "log_wachtrij", "batterij", "nfc")}
+        tablet["status"] = {k: status.get(k) for k in ("app_versie", "version_code", "versie", "log_wachtrij", "batterij", "nfc")}
         if status.get("app_versie"):
             tablet["app_versie"] = status["app_versie"]
-        tablet["laatst"] = _nu_iso()
+        tablet["laatst"] = _iso(_nu())
         tablet["laatst_mono"] = time.monotonic()
         self._bewaar()
         async_dispatcher_send(self.hass, SIGNAL_UPDATE)
 
-    # ---------- logboek ----------
+    def tablet_online(self, t: dict, binnen: float) -> bool:
+        m = t.get("laatst_mono")
+        return bool(m and time.monotonic() - m < binnen)
 
-    def log_toevoegen(self, regels: list[dict]) -> list[str]:
-        """Voegt regels toe, negeert dubbele uid. Geeft de uid's terug die nu bewaard zijn."""
-        bekend = {r.get("uid") for r in self.data["log"]}
-        ontvangen = []
-        for r in regels:
-            uid = r.get("uid")
-            if uid and uid not in bekend:
-                self.data["log"].append(r)
-                bekend.add(uid)
-            if uid:
-                ontvangen.append(uid)
-        self.data["log"].sort(key=lambda r: r.get("tijd") or "")
-        del self.data["log"][:-LOG_KEEP]
+    # ------------------------------------------------------------------ tabletmeldingen (geen toegangen)
+
+    def gebeurtenis(self, regel: dict) -> None:
+        self.data["gebeurtenissen"].append(regel)
+        del self.data["gebeurtenissen"][:-GEBEURTENISSEN_MAX]
         self._bewaar()
-        async_dispatcher_send(self.hass, SIGNAL_UPDATE)
-        return ontvangen
+
+    # ------------------------------------------------------------------ uitnodigingen en portaal
+
+    def uitnodiging_maken(self, wie: str, *, deuren: list[str], valid_from: Any = None, valid_until: Any = None,
+                          schema: Any = None, naam: str = "", dagen: int = UITNODIGING_DAGEN) -> tuple[dict, str]:
+        ids = self._deuren_ids(deuren)
+        if not ids:
+            raise ToegangFout("kies minstens een deur")
+        vf, vu = tijdstip(valid_from), tijdstip(valid_until)
+        if vu and vu <= _nu():
+            raise ToegangFout("het einde van de geldigheid ligt in het verleden")
+        if vf and vu and vu <= vf:
+            raise ToegangFout("het einde van de geldigheid moet na het begin liggen")
+        token = secrets.token_urlsafe(24)
+        u = {"id": _id("u"), "hash": token_hash(token), "deuren": ids, "valid_from": _iso(vf), "valid_until": _iso(vu),
+             "schema": self._schema(schema), "naam": (naam or "").strip(), "gemaakt": _iso(_nu()),
+             "verloopt": _iso(_nu() + timedelta(days=dagen)), "door": wie, "gebruikt": None, "fouten": 0}
+        self.data["uitnodigingen"][u["id"]] = u
+        self.audit(wie, "uitnodiging gemaakt", u["naam"] or "nieuwe medewerker", ids, f"link geldig tot {_kort(u['verloopt'])}")
+        self.gewijzigd(lijst_veranderd=False)
+        return u, token
+
+    def uitnodiging_intrekken(self, wie: str, uid: str) -> None:
+        u = self.data["uitnodigingen"].pop(uid, None)
+        if not u:
+            raise ToegangFout("onbekende uitnodiging")
+        self.audit(wie, "uitnodiging ingetrokken", u["naam"] or "nieuwe medewerker", u["deuren"])
+        self.gewijzigd(lijst_veranderd=False)
+
+    def portaal_zoek(self, token: str) -> tuple[str, dict] | None:
+        """('uitnodiging', u) of ('persoon', p) voor een portaallink, anders None."""
+        h = token_hash(token)
+        for u in self.data["uitnodigingen"].values():
+            if secrets.compare_digest(u["hash"], h):
+                return "uitnodiging", u
+        for p in self.data["personen"].values():
+            if p.get("portaal_hash") and secrets.compare_digest(p["portaal_hash"], h):
+                return "persoon", p
+        return None
+
+    def uitnodiging_bruikbaar(self, u: dict) -> str | None:
+        if u.get("gebruikt"):
+            return "Deze uitnodiging is al gebruikt."
+        if (u.get("verloopt") or "") < _iso(_nu()):
+            return "Deze uitnodiging is verlopen. Vraag een nieuwe link."
+        if u.get("fouten", 0) >= PORTAAL_FOUTEN_MAX:
+            return "Deze uitnodiging is geblokkeerd na te veel pogingen. Vraag een nieuwe link."
+        return None
+
+    def portaal_fout(self, soort: str, obj: dict) -> None:
+        obj["fouten"] = obj.get("fouten", 0) + 1
+        self._bewaar()
+
+    def portaal_token(self, wie: str, pid: str) -> str:
+        p = self.persoon(pid)
+        token = secrets.token_urlsafe(24)
+        p["portaal_hash"], p["fouten"] = token_hash(token), 0
+        self.audit(wie, "portaallink gemaakt", p["naam"], p["deuren"])
+        self.gewijzigd(lijst_veranderd=False)
+        return token
+
+    def aanmelden(self, token: str, *, voornaam: str, achternaam: str, telefoon: str, email: str, pin: str) -> tuple[dict, str]:
+        gevonden = self.portaal_zoek(token)
+        if not gevonden or gevonden[0] != "uitnodiging":
+            raise ToegangFout("Deze link is niet (meer) geldig.")
+        u = gevonden[1]
+        reden = self.uitnodiging_bruikbaar(u)
+        if reden:
+            raise ToegangFout(reden)
+        try:
+            p = self.toevoegen("portaal", voornaam=voornaam, achternaam=achternaam, pin=pin, deuren=u["deuren"],
+                               valid_from=u.get("valid_from"), valid_until=u.get("valid_until"), schema=u.get("schema"),
+                               telefoon=telefoon, email=email, soort="vast", bron="portaal", streng=True)
+        except ToegangFout:
+            self.portaal_fout("uitnodiging", u)
+            raise
+        u["gebruikt"] = p["id"]
+        nieuw = secrets.token_urlsafe(24)
+        p["portaal_hash"], p["fouten"] = token_hash(nieuw), 0
+        self.data["audit"][-1]["user"] = f"{p['naam']} (portaal)"
+        self.gewijzigd()
+        return p, nieuw
+
+    def portaal_wijzigen(self, p: dict, huidige_pin: str, *, telefoon: str | None = None, email: str | None = None,
+                         nieuwe_pin: str | None = None) -> dict:
+        """Wijziging vanuit het eigen portaal: altijd eerst de huidige code (een doorgestuurde link volstaat niet)."""
+        if p.get("fouten", 0) >= PORTAAL_FOUTEN_MAX:
+            raise ToegangFout("Je portaal is geblokkeerd na te veel foute codes. Vraag een nieuwe link.")
+        if not p.get("pin") or not secrets.compare_digest(pin_norm(huidige_pin), p["pin"]):
+            self.portaal_fout("persoon", p)
+            raise ToegangFout("Je huidige code klopt niet.")
+        p["fouten"] = 0
+        wie = f"{p['naam']} (portaal)"
+        if nieuwe_pin:
+            nieuw = self.controleer_pin(nieuwe_pin, behalve=p["id"], streng=True)
+            if nieuw != p["pin"]:
+                self._pin_zetten(p, nieuw)
+                self.audit(wie, "aangepast", p["naam"], p["deuren"], "code gewijzigd")
+        self.bijwerken(wie, p["id"], telefoon=telefoon, email=email)
+        self.gewijzigd()
+        return p
+
+    def foto_gezet(self, wie: str, pid: str) -> None:
+        p = self.persoon(pid)
+        p["foto"] = True
+        p["foto_v"] = int(time.time())
+        self.audit(wie, "aangepast", p["naam"], p["deuren"], "foto gewijzigd")
+        self.gewijzigd(lijst_veranderd=False)

@@ -30,6 +30,9 @@
     "sensor": {
       "laatste": {
         "name": "Laatste toegang"
+      },
+      "codes": {
+        "name": "Codes"
       }
     }
   },
@@ -62,7 +65,7 @@
         },
         "open_entiteit": {
           "name": "Openen met",
-          "description": "Leeg laten om te wissen."
+          "description": ""
         }
       }
     },
@@ -78,7 +81,7 @@
     },
     "deur_openen": {
       "name": "Deur openen",
-      "description": "Opent de deur met de gekozen schakelaar of het gekozen script.",
+      "description": "Opent de deur en zet Op afstand in de historiek.",
       "fields": {
         "deur": {
           "name": "Deur",
@@ -102,37 +105,75 @@
     },
     "persoon_toevoegen": {
       "name": "Persoon toevoegen",
-      "description": "Nieuwe persoon met pincode en deuren.",
+      "description": "Vaste code voor een persoon. Zonder pincode kiest Home Assistant een code.",
       "fields": {
-        "naam": {
+        "voornaam": {
+          "name": "Voornaam",
+          "description": ""
+        },
+        "achternaam": {
           "name": "Naam",
           "description": ""
         },
+        "naam": {
+          "name": "Volledige naam",
+          "description": "Enkel als voornaam en naam leeg zijn."
+        },
         "pincode": {
           "name": "Pincode",
-          "description": "Minstens 4 cijfers, uniek."
+          "description": "4 tot 8 cijfers, uniek."
         },
         "deuren": {
           "name": "Deuren",
           "description": "Lijst van deurnamen."
         },
-        "van": {
+        "geldig_van": {
           "name": "Geldig vanaf",
           "description": ""
         },
-        "tot": {
+        "geldig_tot": {
           "name": "Geldig tot",
           "description": ""
         },
         "schema": {
-          "name": "Weekschema",
+          "name": "Toegangsuren",
           "description": "Lijst van blokken met dagen (1 is maandag), van en tot. Leeg is altijd."
+        },
+        "telefoon": {
+          "name": "Gsm",
+          "description": ""
+        },
+        "email": {
+          "name": "E-mail",
+          "description": ""
+        }
+      }
+    },
+    "tijdelijke_code": {
+      "name": "Tijdelijke code",
+      "description": "Home Assistant kiest een code van 6 cijfers. Na het einde gaat ze vanzelf uit dienst.",
+      "fields": {
+        "naam": {
+          "name": "Naam",
+          "description": "Bv. Pakket bol."
+        },
+        "deuren": {
+          "name": "Deuren",
+          "description": ""
+        },
+        "geldig_van": {
+          "name": "Geldig vanaf",
+          "description": ""
+        },
+        "geldig_tot": {
+          "name": "Geldig tot",
+          "description": ""
         }
       }
     },
     "persoon_wijzigen": {
       "name": "Persoon wijzigen",
-      "description": "Enkel de ingevulde velden veranderen. Lege pincode wist de pincode.",
+      "description": "Enkel de ingevulde velden veranderen.",
       "fields": {
         "persoon": {
           "name": "Persoon",
@@ -142,6 +183,14 @@
           "name": "Nieuwe naam",
           "description": ""
         },
+        "voornaam": {
+          "name": "Voornaam",
+          "description": ""
+        },
+        "achternaam": {
+          "name": "Naam",
+          "description": ""
+        },
         "pincode": {
           "name": "Pincode",
           "description": ""
@@ -150,27 +199,75 @@
           "name": "Deuren",
           "description": ""
         },
-        "van": {
+        "geldig_van": {
           "name": "Geldig vanaf",
           "description": ""
         },
-        "tot": {
+        "geldig_tot": {
           "name": "Geldig tot",
           "description": ""
         },
         "schema": {
-          "name": "Weekschema",
+          "name": "Toegangsuren",
           "description": ""
         },
-        "actief": {
-          "name": "Actief",
+        "telefoon": {
+          "name": "Gsm",
           "description": ""
+        },
+        "email": {
+          "name": "E-mail",
+          "description": ""
+        }
+      }
+    },
+    "persoon_blokkeren": {
+      "name": "Blokkeren",
+      "description": "Code werkt meteen niet meer, tot een tijdstip of tot deblokkeren.",
+      "fields": {
+        "persoon": {
+          "name": "Persoon",
+          "description": "Naam of id."
+        },
+        "tot": {
+          "name": "Tot",
+          "description": "Leeg is tot deblokkeren."
+        }
+      }
+    },
+    "persoon_deblokkeren": {
+      "name": "Deblokkeren",
+      "description": "",
+      "fields": {
+        "persoon": {
+          "name": "Persoon",
+          "description": "Naam of id."
+        }
+      }
+    },
+    "persoon_uit_dienst": {
+      "name": "Uit dienst",
+      "description": "Code werkt niet meer, bewaard en herstelbaar.",
+      "fields": {
+        "persoon": {
+          "name": "Persoon",
+          "description": "Naam of id."
+        }
+      }
+    },
+    "persoon_herstellen": {
+      "name": "Herstellen",
+      "description": "",
+      "fields": {
+        "persoon": {
+          "name": "Persoon",
+          "description": "Naam of id."
         }
       }
     },
     "persoon_verwijderen": {
       "name": "Persoon verwijderen",
-      "description": "",
+      "description": "Meteen en definitief, ook de foto.",
       "fields": {
         "persoon": {
           "name": "Persoon",
@@ -180,12 +277,12 @@
     },
     "overzicht": {
       "name": "Overzicht",
-      "description": "Personen (zonder pincodes), deuren en tablets.",
+      "description": "Personen (zonder codes), deuren en tablets.",
       "fields": {}
     },
     "tablet_koppelcode": {
       "name": "Tablet koppelcode",
-      "description": "Maakt een koppelcode van 6 cijfers, 10 minuten geldig.",
+      "description": "Koppelcode van 6 cijfers, 10 minuten geldig.",
       "fields": {
         "deur": {
           "name": "Deur",
@@ -198,12 +295,42 @@
       }
     },
     "tablet_intrekken": {
-      "name": "Tablet intrekken",
+      "name": "Tablet ontkoppelen",
       "description": "De tablet krijgt daarna 401 en wist zijn lijst.",
       "fields": {
         "tablet": {
           "name": "Tablet",
           "description": "Naam of id."
+        }
+      }
+    },
+    "uitnodiging_maken": {
+      "name": "Uitnodiging maken",
+      "description": "Link naar het portaal waar een medewerker zelf zijn gegevens, code en foto ingeeft.",
+      "fields": {
+        "deuren": {
+          "name": "Deuren",
+          "description": ""
+        },
+        "naam": {
+          "name": "Naam",
+          "description": "Optioneel, voor de begroeting."
+        },
+        "geldig_van": {
+          "name": "Geldig vanaf",
+          "description": ""
+        },
+        "geldig_tot": {
+          "name": "Geldig tot",
+          "description": ""
+        },
+        "schema": {
+          "name": "Toegangsuren",
+          "description": ""
+        },
+        "dagen": {
+          "name": "Link geldig (dagen)",
+          "description": ""
         }
       }
     }
