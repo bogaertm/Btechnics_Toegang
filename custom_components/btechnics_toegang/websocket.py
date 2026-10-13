@@ -147,7 +147,9 @@ def _entry_out(reg: Register, p: dict, admin: bool = True) -> dict:
         out.update(voornaam=p.get("voornaam", ""), achternaam=p.get("achternaam", ""), telefoon=p.get("telefoon", ""),
                    email=p.get("email", ""), foto=bool(p.get("foto")), foto_v=p.get("foto_v", 0),
                    portaal=bool(p.get("portaal_hash")), kaarten=len(p.get("kaarten") or []),
-                   gezicht=_gezicht_kort(reg, p))
+                   gezicht=_gezicht_kort(reg, p),
+                   # zoals de codes: de beheerder ziet de link (bewaard sinds v0.5.1, oudere links enkel als hash)
+                   portaal_url=portaal_url(reg.hass, p["portaal_token"]) if p.get("portaal_token") else None)
     return out
 
 

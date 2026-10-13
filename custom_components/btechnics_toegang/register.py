@@ -784,7 +784,7 @@ class Register:
     def portaal_token(self, wie: str, pid: str) -> str:
         p = self.persoon(pid)
         token = secrets.token_urlsafe(24)
-        p["portaal_hash"], p["fouten"] = token_hash(token), 0
+        p["portaal_hash"], p["portaal_token"], p["fouten"] = token_hash(token), token, 0
         self.audit(wie, "portaallink gemaakt", p["naam"], p["deuren"])
         self.gewijzigd(lijst_veranderd=False)
         return token
@@ -806,7 +806,7 @@ class Register:
             raise
         u["gebruikt"] = p["id"]
         nieuw = secrets.token_urlsafe(24)
-        p["portaal_hash"], p["fouten"] = token_hash(nieuw), 0
+        p["portaal_hash"], p["portaal_token"], p["fouten"] = token_hash(nieuw), nieuw, 0
         self.data["audit"][-1]["user"] = f"{p['naam']} (portaal)"
         self.gewijzigd()
         return p, nieuw
