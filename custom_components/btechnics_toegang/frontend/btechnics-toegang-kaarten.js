@@ -246,7 +246,8 @@ function schemaTekst(schema) {
 /* Delen: WhatsApp, sms, mail, kopiëren en deelmenu. In de HA app (iPhone en Android) opent elke knop de deelpagina
    in de gewone browser, want de app zelf laat sms, mail en het klembord niet altijd toe. */
 function inHaApp(hass) {
-  return !!((hass && hass.auth && hass.auth.external) || window.externalApp
+  // de HA apps (iPhone, iPad, Mac en Android) zetten "Home Assistant" of "HomeAssistant" in hun user agent
+  return !!(/Home ?Assistant/i.test(navigator.userAgent) || (hass && hass.auth && hass.auth.external) || window.externalApp
     || (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.externalBus));
 }
 const APPLE = /iPhone|iPad|iPod|Macintosh/.test(navigator.userAgent);
@@ -2310,7 +2311,7 @@ class VtoHandleiding extends VtoBase {
 // exist"). Daarom registreren we opnieuw zolang het nodig is, telkens via window.customElements
 // (het register dat NU actief is) en met een nieuwe subklasse (een constructor mag maar een keer).
 const CARD_CLASSES = [["btechnics-toegang-overzicht", VtoOverzicht], ["btechnics-toegang-historiek", VtoToegang], ["btechnics-toegang-codes", VtoCodes], ["btechnics-toegang-handleiding", VtoHandleiding]];
-const CARDS_VERSION = "0.4.4";
+const CARDS_VERSION = "0.4.5";
 const define = (name, cls) => {
   if (window.customElements.get(name)) return;
   try {
