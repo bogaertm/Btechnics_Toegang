@@ -248,8 +248,8 @@ async function fotoSrc(hass, id, v) {
   const key = `${id}:${v || 0}`;
   const hit = FOTO_SRC.get(key);
   if (hit && hit.until > Date.now()) return hit.path;
-  const r = await hass.callWS({ type: "auth/sign_path", path: `/api/btechnics_toegang/foto/${id}`, expires: 3600 });
-  const path = `${r.path}&v=${v || 0}`;
+  const r = await hass.callWS({ type: "auth/sign_path", path: `/api/btechnics_toegang/foto/${id}?v=${v || 0}`, expires: 3600 });
+  const path = r.path;
   FOTO_SRC.set(key, { path, until: Date.now() + 3000 * 1000 });
   return path;
 }
@@ -2270,7 +2270,7 @@ class VtoHandleiding extends VtoBase {
 // exist"). Daarom registreren we opnieuw zolang het nodig is, telkens via window.customElements
 // (het register dat NU actief is) en met een nieuwe subklasse (een constructor mag maar een keer).
 const CARD_CLASSES = [["btechnics-toegang-overzicht", VtoOverzicht], ["btechnics-toegang-historiek", VtoToegang], ["btechnics-toegang-codes", VtoCodes], ["btechnics-toegang-handleiding", VtoHandleiding]];
-const CARDS_VERSION = "0.4.0";
+const CARDS_VERSION = "0.4.1";
 const define = (name, cls) => {
   if (window.customElements.get(name)) return;
   try {
