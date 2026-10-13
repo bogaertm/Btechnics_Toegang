@@ -212,6 +212,7 @@ function koppelGezicht() {
 // ---------------------------------------------------------------- scan met de camera van de gsm
 const HOUDINGEN = [
   { id: "recht", tekst: "Kijk recht in de camera" },
+  { id: "recht1", tekst: "Kijk recht in de camera" },
   { id: "opzij", tekst: "Draai je hoofd langzaam een beetje opzij" },
   { id: "anderekant", tekst: "Nu een beetje naar de andere kant" },
   { id: "kantel", tekst: "Kijk een beetje omhoog" },
@@ -273,23 +274,27 @@ async function scannen(gz, pin) {
   const doek = document.createElement("canvas"); doek.width = W; doek.height = H;
   const ctx = doek.getContext("2d", { willReadFrequently: true });
   const opnames = [];   // { houding, invoer }
+  let laatsteHoek = "";
   let stap = 0, basis = null, teken1 = 0, teken2 = 0, goedeReeks = 0, stapStart = performance.now(), laatsteTijd = -1;
   const stippen = [...$("#gz-st").children];
   const volgende = (gelukt) => {
     stippen[stap].className = gelukt ? "ok" : "over";
     stap++; goedeReeks = 0; stapStart = performance.now();
   };
+  // hoeken in graden; de eerste rechte opname is het nulpunt
   const past = (h) => {
     const id = HOUDINGEN[stap].id;
-    if (!basis) return id === "recht" && Math.abs(h.draai) < 0.08;
+    if (!basis) return Math.abs(h.draai) < 12 && Math.abs(h.kantel) < 25;
     const d = h.draai - basis.draai, k = h.kantel - basis.kantel;
-    if (id === "recht" || id === "recht2") return Math.abs(d) < 0.06 && Math.abs(k) < 0.05;
-    if (id === "opzij") { if (Math.abs(d) > 0.1 && Math.abs(k) < 0.08) { teken1 = Math.sign(d); return true; } return false; }
-    if (id === "anderekant") return d * teken1 < -0.1 && Math.abs(k) < 0.08;
-    if (id === "kantel") { if (Math.abs(k) > 0.05 && Math.abs(d) < 0.1) { teken2 = Math.sign(k); return true; } return false; }
-    if (id === "anderekantel") return k * teken2 < -0.05 && Math.abs(d) < 0.1;
+    if (id.startsWith("recht")) return Math.abs(d) < 6 && Math.abs(k) < 6 && (id !== "recht1" || performance.now() - laatsteOpname > 600);
+    if (id === "opzij") { if (Math.abs(d) > 12 && Math.abs(k) < 10) { teken1 = Math.sign(d); return true; } return false; }
+    if (id === "anderekant") return d * teken1 < -12 && Math.abs(k) < 10;
+    if (id === "kantel") { if (Math.abs(k) > 8 && Math.abs(d) < 10) { teken2 = Math.sign(k); return true; } return false; }
+    if (id === "anderekantel") return k * teken2 < -8 && Math.abs(d) < 10;
     return false;
   };
+  const diag = new URLSearchParams(location.search).has("diag");
+  let laatsteOpname = 0;
   await new Promise((klaar) => {
     const lus = () => {
       if (stoppen) return klaar();
@@ -303,11 +308,11 @@ async function scannen(gz, pin) {
         else if (!gezichten.length) melding = "Breng je gezicht in het ovaal";
         else {
           const pt = gz.vijfPunten(gezichten[0], W, H);
-          const h = gz.houding(pt);
+          const h = { ...gz.houding(pt), ...gz.hoek(gezichten[0], W, H) };
           const binnen = pt.every(([x, y]) => x > W * 0.05 && x < W * 0.95 && y > H * 0.05 && y < H * 0.95);
           if (!binnen) melding = "Breng je gezicht in het ovaal";
           else if (h.oog < Math.min(W, H) * 0.09) melding = "Kom wat dichter";
-          else if (past(h)) {
+          else if ((laatsteHoek = `${h.draai.toFixed(0)}° ${h.kantel.toFixed(0)}°`) && past(h)) {
             goedeReeks++; ok = true;
             if (goedeReeks >= 3) {
               ctx.drawImage(video, 0, 0, W, H);
@@ -319,14 +324,15 @@ async function scannen(gz, pin) {
               else {
                 if (!basis) basis = h;
                 opnames.push({ houding: HOUDINGEN[stap].id, invoer });
+                laatsteOpname = performance.now();
                 volgende(true);
               }
             }
           } else goedeReeks = 0;
         }
-        // lukt een zijwaartse houding niet binnen 12 seconden, dan gaan we verder
-        if (stap < HOUDINGEN.length && basis && !HOUDINGEN[stap].id.startsWith("recht") && nu - stapStart > 12000) volgende(false);
-        if (stap < HOUDINGEN.length) tip.textContent = melding;
+        // lukt een zijwaartse houding niet binnen 8 seconden, dan gaan we verder
+        if (stap < HOUDINGEN.length && basis && !HOUDINGEN[stap].id.startsWith("recht") && nu - stapStart > 8000) volgende(false);
+        if (stap < HOUDINGEN.length) tip.textContent = melding + (diag && gezichten.length === 1 ? ` (${laatsteHoek})` : "");
         ovaal.classList.toggle("goed", ok);
       }
       requestAnimationFrame(lus);
@@ -491,6 +497,7 @@ function toonPersoon() {
       <div class="rij"><span>Code</span><span>${"&bull;".repeat(i.pin_lengte || 0)} (${i.pin_lengte} cijfers)</span></div></div></div>
     ${i.recent && i.recent.length ? `<div class="kaart"><h2>Laatste toegangen</h2>${i.recent.map((r) => `<div class="rij"><span>${esc(datum(new Date(r.ts * 1000).toISOString()))}</span>
       <span>${esc(r.door)} <span class="dot ${r.opened ? "" : "retired"}" style="${r.opened ? "" : "background:#c62828"}"></span></span></div>`).join("")}</div>` : ""}
+    ${gezichtKaart()}
     <form id="f" novalidate class="kaart"><h2>Gegevens aanpassen</h2>
       <p class="uitleg">Vul enkel in wat je wil wijzigen. Ter controle vragen we altijd je huidige code.</p>
       <label for="tel">Gsm-nummer</label><input id="tel" type="tel" autocomplete="tel" value="${esc(i.telefoon)}">
@@ -502,7 +509,6 @@ function toonPersoon() {
       <label for="huidig">Je huidige code</label><input id="huidig" class="pin" type="password" inputmode="numeric" autocomplete="current-password" maxlength="${i.pin.max}">
       <div id="m" class="melding"></div>
       <button class="knop" id="bewaar" type="submit">Bewaren</button></form>
-    ${gezichtKaart()}
     <div class="kaart">${privacy()}</div>`;
   const m = $("#m");
   FOTO = null;
