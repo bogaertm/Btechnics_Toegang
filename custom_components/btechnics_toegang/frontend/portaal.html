@@ -442,6 +442,8 @@ function toonUitnodiging() {
       <button class="knop" id="verstuur" type="submit">Toegang aanmaken</button></div>
     </form>`;
   const m = $("#m");
+  const vi = i.voorinvullen || {};
+  [["vn", "voornaam"], ["an", "achternaam"], ["tel", "telefoon"], ["mail", "email"]].forEach(([id, k]) => { if (vi[k]) $("#" + id).value = vi[k]; });
   koppelFoto("ft", m);
   ["p1", "p2"].forEach((id) => $("#" + id).addEventListener("input", (e) => { e.target.value = e.target.value.replace(/\D/g, ""); }));
   $("#f").addEventListener("submit", async (ev) => {

@@ -141,7 +141,7 @@ class Register:
         for k, v in (("valid_from", None), ("valid_until", None), ("until", None), ("soort", "vast"),
                      ("voornaam", ""), ("achternaam", ""), ("telefoon", ""), ("email", ""), ("foto", False),
                      ("owner", None), ("bron", "ha"), ("schema", []), ("kaarten", []), ("portaal_hash", None),
-                     ("gezicht", None)):
+                     ("gezicht", None), ("werk_id", None)):
             p.setdefault(k, v)
         p.setdefault("gewijzigd", p.get("gemaakt"))
 
@@ -155,6 +155,8 @@ class Register:
             self.data["versie"] += 1
         self._bewaar()
         async_dispatcher_send(self.hass, SIGNAL_UPDATE)
+        # Btechnics IOT stuurt dan (na 10 s rust) een nieuwe status naar Work
+        async_dispatcher_send(self.hass, "btechnics_branding_status_changed")
         self.hass.async_create_task(self._wek())
 
     async def _wek(self) -> None:
@@ -805,6 +807,8 @@ class Register:
             self.portaal_fout("uitnodiging", u)
             raise
         u["gebruikt"] = p["id"]
+        if u.get("werk_id") and not any(q.get("werk_id") == u["werk_id"] for q in self.data["personen"].values()):
+            p["werk_id"] = u["werk_id"]
         nieuw = secrets.token_urlsafe(24)
         p["portaal_hash"], p["portaal_token"], p["fouten"] = token_hash(nieuw), nieuw, 0
         self.data["audit"][-1]["user"] = f"{p['naam']} (portaal)"

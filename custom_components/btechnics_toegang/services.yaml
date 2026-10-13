@@ -206,6 +206,18 @@ persoon_verwijderen:
       selector:
         text: {}
 overzicht: {}
+werk:
+  fields:
+    actie:
+      required: true
+      selector:
+        text:
+    velden:
+      selector:
+        object:
+    door:
+      selector:
+        text:
 tablet_koppelcode:
   fields:
     deur:
