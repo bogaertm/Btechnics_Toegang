@@ -107,7 +107,7 @@ function geldig(i) {
   if (i.valid_until) return `Tot ${datum(i.valid_until)}`;
   return "Zonder einddatum";
 }
-function melding(el, tekst, ok) { el.className = "melding " + (ok ? "ok" : "fout"); el.textContent = tekst; if (tekst) el.scrollIntoView({ block: "nearest", behavior: "smooth" }); }
+function melding(el, tekst, ok) { el.className = tekst ? "melding " + (ok ? "ok" : "fout") : "melding"; el.textContent = tekst; if (tekst) el.scrollIntoView({ block: "nearest", behavior: "smooth" }); }
 async function post(pad, data) {
   const r = await fetch(apiPad() + pad, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data), cache: "no-store" });
   let j = {};
