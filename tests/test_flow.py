@@ -128,6 +128,14 @@ async def test_volledige_flow(opgezet):
     online = [s for s in hass.states.async_all("binary_sensor") if s.entity_id.endswith("_online")]
     assert len(online) == 1 and online[0].state == "on"
 
+    # de 30 s tik voor online/offline loopt in de event loop (geen thread waarschuwing)
+    from datetime import timedelta
+    from homeassistant.util import dt as dt_util
+    from pytest_homeassistant_custom_component.common import async_fire_time_changed
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=31))
+    await hass.async_block_till_done()
+    assert hass.states.get(online[0].entity_id).state == "on"
+
     # sensor laatste toegang
     laatste = hass.states.get("sensor.deur_vergaderzaal_laatste_toegang")
     assert laatste is not None and laatste.state != "unknown"
