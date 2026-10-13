@@ -205,6 +205,9 @@ async def test_portaal(hass_klaar, hass_ws_client, hass_client_no_auth):
     # beheerder: nieuwe portaallink maakt de oude ongeldig
     r = await _ws(ws, 2, type=f"{DOMAIN}/portaal/link", entry=p["id"])
     assert r["success"] and (await client.get(eigen + "/info")).status == 404
+    lijst = await _ws(ws, 3, type=f"{DOMAIN}/manage/list")
+    e = [x for x in lijst["result"]["entries"] if x["id"] == p["id"]][0]
+    assert e["portaal_url"] == r["result"]["url"]
     # onbekende link
     assert (await client.get(f"{API}/portaal/onzin/info")).status == 404
     # verwijderen wist de foto

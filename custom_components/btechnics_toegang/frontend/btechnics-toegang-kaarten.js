@@ -151,7 +151,9 @@ const BASE_CSS = `
     font: inherit; color: var(--primary-text-color); background: var(--card-background-color, #fff);
     border: 1px solid var(--divider-color); border-radius: 8px; padding: 8px 10px; min-height: 40px; box-sizing: border-box;
   }
-  button.btn { cursor: pointer; background: var(--secondary-background-color); }
+  button.btn { cursor: pointer; background: var(--secondary-background-color); display: inline-flex; align-items: center; justify-content: center;
+    gap: 6px; height: 40px; min-height: 40px; padding: 0 14px; line-height: 1.2; white-space: nowrap; --mdc-icon-size: 18px; }
+  input, select { height: 40px; }
   button.btn:hover { border-color: var(--primary-color); }
   button.btn.active { border-color: var(--primary-color); color: var(--primary-color); }
   .scroll { overflow-x: auto; max-width: 100%; }
@@ -1270,6 +1272,25 @@ class VtoCodes extends VtoBase {
       .row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 10px; }
       .row label { display: inline-flex; align-items: center; gap: 6px; }
       .row input[type=text] { min-width: 220px; }
+      .frm { max-width: 760px; }
+      .frm .fhead { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
+      .frm .fhead h3 { margin: 0; }
+      .frm .sec { border-top: 1px solid var(--divider-color); padding-top: 14px; margin-top: 14px; }
+      .frm .sec > h4 { margin: 0 0 10px; font-size: 0.75rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--secondary-text-color); }
+      .frm .g2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 16px; }
+      .frm .fld { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+      .frm .fld > span { font-size: 0.85rem; color: var(--secondary-text-color); }
+      .frm .fld input { width: 100%; min-width: 0; }
+      .frm .hint { font-size: 0.85rem; color: var(--secondary-text-color); margin-top: 8px; }
+      .frm .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+      .frm .chk { display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 14px; border: 1px solid var(--divider-color);
+        border-radius: 20px; cursor: pointer; user-select: none; }
+      .frm .chk:has(input:checked) { border-color: var(--primary-color); background: rgba(var(--rgb-primary-color, 3, 169, 244), 0.08); }
+      .frm .chk input { min-height: 0; height: 18px; width: 18px; margin: 0; accent-color: var(--primary-color); }
+      .frm .linkrij { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+      .frm .linkrij input { flex: 1 1 320px; font-family: var(--code-font-family, ui-monospace, Menlo, monospace); font-size: 0.85rem; }
+      .frm .voet { display: flex; gap: 8px; border-top: 1px solid var(--divider-color); padding-top: 14px; margin-top: 16px; }
+      ha-card.m .frm .g2 { grid-template-columns: 1fr; }
       .msg { margin: 0 0 12px; font-size: 0.9rem; }
       .msg.ok { color: var(--success-color, #0b8043); }
       .audit td { font-size: 0.85rem; }
@@ -1686,9 +1707,9 @@ class VtoCodes extends VtoBase {
   _validityRows(e) {
     const vf = e && e.valid_from ? this._localInput(Date.parse(e.valid_from)) : "";
     const vu = e && e.valid_until ? this._localInput(Date.parse(e.valid_until)) : "";
-    return `<div class="row"><label>Geldig vanaf <input id="vfrom" type="datetime-local" value="${vf}"></label>
-        <label>Geldig tot <input id="vuntil" type="datetime-local" value="${vu}"></label>
-        <span class="muted">Leeg = vanaf nu, zonder einde. Na het einde gaat de code vanzelf uit dienst (herstelbaar).</span></div>`;
+    return `<div class="frm"><div class="g2"><label class="fld"><span>Geldig vanaf</span><input id="vfrom" type="datetime-local" value="${vf}"></label>
+        <label class="fld"><span>Geldig tot</span><input id="vuntil" type="datetime-local" value="${vu}"></label></div>
+        <div class="hint">Leeg is vanaf nu en zonder einde. Na het einde gaat de code vanzelf uit dienst (herstelbaar).</div></div>`;
   }
   _readValidity(p, curVu) {
     const full = (v) => (v && v.length === 16 ? v + ":00" : v || "");
@@ -1898,22 +1919,44 @@ class VtoCodes extends VtoBase {
       const waiting = !isNew && this._waiting(e);
       const canValid = isNew || e.status !== "retired";
       const vast = isNew || e.soort !== "tijdelijk";
-      const vn0 = isNew ? "" : (e.voornaam || (e.achternaam ? "" : e.name)), an0 = isNew ? "" : (e.achternaam || "");
+      // oudere personen hebben enkel een volledige naam: eerste woord als voornaam, de rest als naam
+      const deel = !isNew && !e.voornaam && !e.achternaam ? String(e.name || "").trim().split(/\s+/) : null;
+      const vn0 = isNew ? "" : (deel ? deel[0] : e.voornaam || ""), an0 = isNew ? "" : (deel ? deel.slice(1).join(" ") : e.achternaam || "");
       this._blokken = isNew ? [] : (e.schema || []).map((b) => ({ ...b, dagen: [...b.dagen] }));
-      p.innerHTML = `<h3>${isNew ? "Nieuwe code" : "Aanpassen: " + esc(e.name)}</h3>
-        ${vast ? `<div class="row"><label>Voornaam <input id="vn" type="text" value="${esc(vn0)}" autocomplete="off"></label><label>Naam <input id="an" type="text" value="${esc(an0)}" autocomplete="off"></label></div>
-          <div class="row"><label>Gsm <input id="tel" type="tel" value="${isNew ? "" : esc(e.telefoon || "")}"></label><label>E-mail <input id="mail" type="email" value="${isNew ? "" : esc(e.email || "")}"></label></div>` : ""}
-        <div class="row">${vast ? "" : `<label>Naam <input id="name" type="text" value="${isNew ? "" : esc(e.name)}"></label>`}
-        ${isBadge ? "" : `<label>Code <input id="code" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="8" placeholder="${isNew ? "4 tot 8 cijfers" : "ongewijzigd"}"></label>`}</div>
-        ${!isBadge && active ? `<div class="row">Deuren: ${doors.map((d) => `<label><input type="checkbox" value="${esc(d.id)}" ${on.has(d.id) ? "checked" : ""}> ${esc(d.name)}</label>`).join("")}</div>` : ""}
-        ${!isBadge && waiting ? `<div class="row">Deuren: ${e.stored.map((d) => `<span class="chip">${esc(d.name)}</span>`).join("")}</div>` : ""}
-        ${vast && e && e.foto ? `<div class="row">${this._avatar(e, 72)}<span class="muted">Foto uit het portaal.</span></div>` : ""}
-        ${vast ? `<div class="row" style="display:block"><div class="muted" style="margin-bottom:4px">Toegangsuren</div><div id="blokken"></div>
-          <button class="btn" id="blok" type="button"><ha-icon icon="mdi:clock-plus-outline" style="--mdc-icon-size:18px"></ha-icon> Uren toevoegen</button>
-          <span class="muted" style="margin-left:8px">Geen uren is altijd. Een eindtijd voor de begintijd loopt door tot de volgende dag.</span></div>` : ""}
-        ${canValid ? this._validityRows(e) : ""}
-        ${!isNew && !active && !waiting ? `<div class="row muted">Deze ${isBadge ? "badge" : "code"} werkt nu niet. De aanpassing geldt zodra ze weer actief is.</div>` : ""}
-        <div class="row"><button class="btn primary" id="ok">Opslaan</button><button class="btn" id="cancel">Annuleren</button></div>`;
+      const fld = (lbl, html) => `<label class="fld"><span>${lbl}</span>${html}</label>`;
+      const codeFld = isBadge ? "" : fld("Code", `<input id="code" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="8" placeholder="${isNew ? "4 tot 8 cijfers" : "ongewijzigd"}" autocomplete="off">`);
+      const portaal = !isNew && vast && e.status !== "retired" ? `<div class="sec"><h4>Portaallink</h4>
+          ${e.portaal_url ? `<div class="linkrij"><input id="plink" type="text" readonly value="${esc(e.portaal_url)}">
+            <button class="btn" type="button" id="pkopie"><ha-icon icon="mdi:content-copy"></ha-icon>Kopiëren</button>
+            <button class="btn primary" type="button" id="pstuur"><ha-icon icon="mdi:send"></ha-icon>Versturen</button>
+            <button class="btn" type="button" id="pnieuw"><ha-icon icon="mdi:refresh"></ha-icon>Nieuwe link</button></div>
+            <div class="hint">Persoonlijke pagina van ${esc(e.voornaam || e.name)}: gegevens, foto, code en gezichtsherkenning. Een nieuwe link maakt de oude ongeldig.</div>`
+          : `<div class="linkrij"><button class="btn primary" type="button" id="pnieuw"><ha-icon icon="mdi:link-variant-plus"></ha-icon>${e.portaal ? "Nieuwe link maken en versturen" : "Link maken en versturen"}</button></div>
+            <div class="hint">${e.portaal ? "Er bestaat al een link, maar die is van voor deze versie en kan niet getoond worden. Een nieuwe link maakt de oude ongeldig." : "Nog geen persoonlijke pagina. Met de link past de medewerker zelf gsm, e-mail, foto en code aan en zet hij gezichtsherkenning aan."}</div>`}</div>` : "";
+      p.innerHTML = `<div class="frm">
+        <div class="fhead">${!isNew && vast ? this._avatar(e, 44) : ""}<h3>${isNew ? "Nieuwe code" : "Aanpassen: " + esc(e.name)}</h3></div>
+        <div class="sec"><h4>${vast ? "Persoon" : "Code"}</h4><div class="g2">
+          ${vast ? fld("Voornaam", `<input id="vn" type="text" value="${esc(vn0)}" autocomplete="off">`) + fld("Naam", `<input id="an" type="text" value="${esc(an0)}" autocomplete="off">`)
+            + fld("Gsm", `<input id="tel" type="tel" value="${isNew ? "" : esc(e.telefoon || "")}">`) + fld("E-mail", `<input id="mail" type="email" value="${isNew ? "" : esc(e.email || "")}">`)
+            : fld("Naam", `<input id="name" type="text" value="${isNew ? "" : esc(e.name)}">`)}
+          ${codeFld}</div>
+          ${gezichtTekst(e) ? `<div class="hint">${esc(gezichtTekst(e))}</div>` : ""}</div>
+        <div class="sec"><h4>Toegang</h4>
+          ${!isBadge && active ? `<div class="chips">${doors.map((d) => `<label class="chk"><input type="checkbox" value="${esc(d.id)}" ${on.has(d.id) ? "checked" : ""}>${esc(d.name)}</label>`).join("")}</div>` : ""}
+          ${!isBadge && waiting ? `<div class="chips">${e.stored.map((d) => `<span class="chip">${esc(d.name)}</span>`).join("")}</div>` : ""}
+          ${vast ? `<div style="margin-top:14px"><div class="hint" style="margin:0 0 6px">Toegangsuren</div><div id="blokken"></div>
+            <button class="btn" id="blok" type="button" style="margin-top:8px"><ha-icon icon="mdi:clock-plus-outline"></ha-icon>Uren toevoegen</button>
+            <div class="hint">Geen uren is altijd. Een eindtijd voor de begintijd loopt door tot de volgende dag.</div></div>` : ""}
+          ${canValid ? `<div style="margin-top:14px">${this._validityRows(e)}</div>` : ""}
+          ${!isNew && !active && !waiting ? `<div class="hint">Deze ${isBadge ? "badge" : "code"} werkt nu niet. De aanpassing geldt zodra ze weer actief is.</div>` : ""}</div>
+        ${portaal}
+        <div class="voet"><button class="btn primary" id="ok">Opslaan</button><button class="btn" id="cancel">Annuleren</button></div></div>`;
+      const pk = p.querySelector("#pkopie");
+      if (pk) pk.addEventListener("click", async () => { const ok = await kopieer(e.portaal_url, p.querySelector("#plink")); pk.lastChild.textContent = ok ? "Gekopieerd" : "Niet gelukt"; setTimeout(() => { pk.lastChild.textContent = "Kopiëren"; }, 2500); });
+      const ps = p.querySelector("#pstuur");
+      if (ps) ps.addEventListener("click", () => this._linkPaneel(`Portaallink: ${e.name}`, "", this._portaalTekst(e, e.portaal_url), "Je persoonlijke toegangspagina bij Btechnics"));
+      const pn = p.querySelector("#pnieuw");
+      if (pn) pn.addEventListener("click", () => this._portaalLink(e));
       if (vast) this._tekenBlokken(p);
       p.querySelector("#ok").addEventListener("click", () => {
         const vn = vast ? p.querySelector("#vn").value.trim() : "", an = vast ? p.querySelector("#an").value.trim() : "";
@@ -2020,13 +2063,15 @@ class VtoCodes extends VtoBase {
     p.classList.add("on");
     if (!this._mobile) p.scrollIntoView({ block: "nearest" });
   }
+  _portaalTekst(e, url) {
+    const hi = e.voornaam || String(e.name || "").split(" ")[0];
+    return `Hallo ${hi},\n\nVia deze persoonlijke link bekijk je je toegang bij Btechnics en pas je zelf je gsm-nummer, e-mail, foto of code aan. Je kan er ook gezichtsherkenning aanzetten:\n${url}\n\nBewaar de link en deel hem met niemand.`;
+  }
   async _portaalLink(e) {
     if (e.portaal && !confirm(`${e.name} heeft al een portaallink. Een nieuwe link maken? De oude werkt dan niet meer.`)) return;
     try {
       const r = await this._ws({ type: "btechnics_toegang/portaal/link", entry: e.id });
-      const hi = e.voornaam || e.name;
-      this._linkPaneel(`Portaallink: ${e.name}`, "Nieuwe link gemaakt. Stuur hem door:",
-        `Hallo ${hi},\n\nVia deze persoonlijke link bekijk je je toegang bij Btechnics en pas je zelf je gsm-nummer, e-mail, foto of code aan:\n${r.url}\n\nBewaar de link en deel hem met niemand.`,
+      this._linkPaneel(`Portaallink: ${e.name}`, "Nieuwe link gemaakt. Stuur hem door:", this._portaalTekst(e, r.url),
         "Je persoonlijke toegangspagina bij Btechnics");
       this._load();
     } catch (err) { this._message(`Niet gelukt: ${errText(err)}`); }
@@ -2321,7 +2366,7 @@ class VtoHandleiding extends VtoBase {
 // exist"). Daarom registreren we opnieuw zolang het nodig is, telkens via window.customElements
 // (het register dat NU actief is) en met een nieuwe subklasse (een constructor mag maar een keer).
 const CARD_CLASSES = [["btechnics-toegang-overzicht", VtoOverzicht], ["btechnics-toegang-historiek", VtoToegang], ["btechnics-toegang-codes", VtoCodes], ["btechnics-toegang-handleiding", VtoHandleiding]];
-const CARDS_VERSION = "0.5.0";
+const CARDS_VERSION = "0.5.1";
 const define = (name, cls) => {
   if (window.customElements.get(name)) return;
   try {
