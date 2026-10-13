@@ -3,6 +3,7 @@ import time
 from datetime import timedelta
 
 from homeassistant.components.binary_sensor import BinarySensorDeviceClass, BinarySensorEntity
+from homeassistant.core import callback
 from homeassistant.helpers.event import async_track_time_interval
 
 from .const import DOMAIN, OFFLINE_NA
@@ -14,8 +15,13 @@ async def async_setup_entry(hass, entry, async_add_entities):
     ents = [TabletOnline(reg, t["id"]) for t in reg.data["tablets"].values()]
     async_add_entities(ents)
     if ents:
-        entry.async_on_unload(async_track_time_interval(
-            hass, lambda _now: [e.async_write_ha_state() for e in ents if e.hass], timedelta(seconds=30)))
+        @callback
+        def _tik(_now) -> None:
+            for e in ents:
+                if e.hass:
+                    e.async_write_ha_state()
+
+        entry.async_on_unload(async_track_time_interval(hass, _tik, timedelta(seconds=30)))
 
 
 class TabletOnline(ToegangEntiteit, BinarySensorEntity):
