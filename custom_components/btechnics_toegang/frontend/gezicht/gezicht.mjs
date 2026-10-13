@@ -37,7 +37,17 @@ export function vijfPunten(lm, w, h) {
   return [ogen[0], ogen[1], p(PUNTEN.neus), mond[0], mond[1]];
 }
 
-// houding: draaiing (links/rechts) en kanteling (op/neer), ongeveer 0 als je recht kijkt
+// hoofdhouding in graden uit de 3D punten van MediaPipe: draai (links/rechts) via de buitenste ooghoeken (33, 263),
+// kanteling (op/neer) via voorhoofd (10) en kin (152). Recht in de camera kijken geeft ongeveer 0.
+export function hoek(lm, w, h) {
+  const p = (i) => [lm[i].x * w, lm[i].y * h, lm[i].z * w];
+  const a = p(33), b = p(263), boven = p(10), onder = p(152);
+  const draai = Math.atan2(b[2] - a[2], b[0] - a[0]) * 180 / Math.PI;
+  const kantel = Math.atan2(onder[2] - boven[2], onder[1] - boven[1]) * 180 / Math.PI;
+  return { draai, kantel };
+}
+
+// oude 2D benadering (enkel nog voor de oogafstand)
 export function houding(pt) {
   const [ol, or, n, ml, mr] = pt;
   const om = [(ol[0] + or[0]) / 2, (ol[1] + or[1]) / 2], mm = [(ml[0] + mr[0]) / 2, (ml[1] + mr[1]) / 2];
