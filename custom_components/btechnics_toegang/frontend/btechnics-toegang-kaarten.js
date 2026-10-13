@@ -1280,7 +1280,8 @@ class VtoCodes extends VtoBase {
       .frm .g2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 16px; }
       .frm .fld { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
       .frm .fld > span { font-size: 0.85rem; color: var(--secondary-text-color); }
-      .frm .fld input { width: 100%; min-width: 0; }
+      .frm .fld input, .frm .fld select { width: 100%; min-width: 0; }
+      .frm .chips button.btn.active { background: var(--primary-color); color: var(--text-primary-color, #fff); border-color: var(--primary-color); }
       .frm .hint { font-size: 0.85rem; color: var(--secondary-text-color); margin-top: 8px; }
       .frm .chips { display: flex; flex-wrap: wrap; gap: 8px; }
       .frm .chk { display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 14px; border: 1px solid var(--divider-color);
@@ -1750,15 +1751,17 @@ class VtoCodes extends VtoBase {
     const DUR = [["1", "1 uur"], ["today", "Vandaag"], ["24", "24 uur"], ["3d", "3 dagen"], ["7d", "1 week"], ["custom", "Van … tot …"]];
     const st = { type: "Pakket", dur: "24" };   // geen optie Eenmalig meer (keuze Matthias 03/10)
     const day = () => { const x = this._localInput(Date.now()); return `${Number(x.slice(8, 10))}/${Number(x.slice(5, 7))}`; };
-    p.innerHTML = `<h3>Tijdelijke code</h3>
-      <div class="row" id="qtype">${TYPES.map(([t]) => `<button class="btn" data-qt="${t}">${t}</button>`).join("")}</div>
-      <div class="row"><label>Naam <input id="qname" type="text" maxlength="30"></label>
-        <span class="muted">Bv. "Pakket bol" of "Technicus Fluvius". Komt in de historiek.</span></div>
-      <div class="row">Deuren: ${doors.map((d) => `<label><input type="checkbox" class="qd" value="${esc(d.id)}" ${saved.includes(d.id) || (!saved.length && d === doors[0]) ? "checked" : ""}> ${esc(d.name)}</label>`).join("")}</div>
-      <div class="row" id="qdur">Geldig: ${DUR.map(([k, l]) => `<button class="btn" data-qd="${k}">${l}</button>`).join("")}</div>
-      <div class="row" id="qcustom" style="display:none"><label>Van <input id="vfrom" type="datetime-local"></label><label>Tot <input id="vuntil" type="datetime-local"></label><span class="muted">Belgische tijd (tijdzone van Home Assistant). Laat Van leeg om meteen te starten.</span></div>
-      <div class="row muted" id="qsum"></div>
-      <div class="row"><button class="btn primary" id="ok">Maak code en deel</button><button class="btn" id="cancel">Annuleren</button></div>`;
+    p.innerHTML = `<div class="frm"><div class="fhead"><h3>Tijdelijke code</h3></div>
+      <div class="sec"><h4>Voor wie</h4><div class="chips" id="qtype">${TYPES.map(([t]) => `<button class="btn" data-qt="${t}">${t}</button>`).join("")}</div>
+        <div class="g2" style="margin-top:12px"><label class="fld"><span>Naam (komt in de historiek)</span><input id="qname" type="text" maxlength="30" placeholder="bv. Pakket bol of Technicus Fluvius"></label></div></div>
+      <div class="sec"><h4>Toegang</h4>
+        <div class="chips">${doors.map((d) => `<label class="chk"><input type="checkbox" class="qd" value="${esc(d.id)}" ${saved.includes(d.id) || (!saved.length && d === doors[0]) ? "checked" : ""}>${esc(d.name)}</label>`).join("")}</div>
+        <div class="hint" style="margin:14px 0 6px">Geldig</div>
+        <div class="chips" id="qdur">${DUR.map(([k, l]) => `<button class="btn" data-qd="${k}">${l}</button>`).join("")}</div>
+        <div id="qcustom" style="display:none;margin-top:12px"><div class="g2"><label class="fld"><span>Van (leeg is meteen)</span><input id="vfrom" type="datetime-local"></label>
+          <label class="fld"><span>Tot</span><input id="vuntil" type="datetime-local"></label></div></div>
+        <div class="hint" id="qsum"></div></div>
+      <div class="voet"><button class="btn primary" id="ok">Maak code en deel</button><button class="btn" id="cancel">Annuleren</button></div></div>`;
     const $ = (id) => p.querySelector("#" + id);
     let nameTouched = false;
     $("qname").addEventListener("input", () => { nameTouched = true; });
@@ -1776,7 +1779,7 @@ class VtoCodes extends VtoBase {
     const draw = () => {
       p.querySelectorAll("[data-qt]").forEach((b) => b.classList.toggle("active", b.dataset.qt === st.type));
       p.querySelectorAll("[data-qd]").forEach((b) => b.classList.toggle("active", b.dataset.qd === st.dur));
-      $("qcustom").style.display = st.dur === "custom" ? "flex" : "none";
+      $("qcustom").style.display = st.dur === "custom" ? "block" : "none";
       if (!nameTouched) $("qname").value = `${st.type} ${day()}`;
       const u = until();
       const f = st.dur === "custom" && $("vfrom").value ? ($("vfrom").value.length === 16 ? $("vfrom").value + ":00" : $("vfrom").value) : "";
@@ -2083,15 +2086,17 @@ class VtoCodes extends VtoBase {
     this._message("");
     this._form = { type: "invite" };
     this._blokken = [];
-    p.innerHTML = `<h3>Uitnodiging voor een medewerker</h3>
-      <div class="row muted">De medewerker krijgt een link en vult zelf voornaam, naam, gsm, e-mail, zijn code en een foto in. De code werkt meteen na het invullen.</div>
-      <div class="row"><label>Naam (optioneel) <input id="iname" type="text" maxlength="40" placeholder="voor de begroeting"></label>
-        <label>Link geldig <select id="idagen"><option value="1">1 dag</option><option value="3">3 dagen</option><option value="7" selected>7 dagen</option><option value="14">14 dagen</option></select></label></div>
-      <div class="row">Deuren: ${doors.map((d) => `<label><input type="checkbox" class="id" value="${esc(d.id)}" ${doors.length === 1 ? "checked" : ""}> ${esc(d.name)}</label>`).join("")}</div>
-      <div class="row" style="display:block"><div class="muted" style="margin-bottom:4px">Toegangsuren</div><div id="blokken"></div>
-        <button class="btn" id="blok" type="button"><ha-icon icon="mdi:clock-plus-outline" style="--mdc-icon-size:18px"></ha-icon> Uren toevoegen</button></div>
-      ${this._validityRows(null)}
-      <div class="row"><button class="btn primary" id="ok">Maak link en deel</button><button class="btn" id="cancel">Annuleren</button></div>`;
+    p.innerHTML = `<div class="frm"><div class="fhead"><h3>Uitnodiging voor een medewerker</h3></div>
+      <div class="hint" style="margin-top:4px">De medewerker krijgt een link en vult zelf voornaam, naam, gsm, e-mail, zijn code en een foto in. De code werkt meteen na het invullen.</div>
+      <div class="sec"><h4>Uitnodiging</h4><div class="g2">
+        <label class="fld"><span>Naam (optioneel, voor de begroeting)</span><input id="iname" type="text" maxlength="40"></label>
+        <label class="fld"><span>Link geldig</span><select id="idagen"><option value="1">1 dag</option><option value="3">3 dagen</option><option value="7" selected>7 dagen</option><option value="14">14 dagen</option></select></label></div></div>
+      <div class="sec"><h4>Toegang</h4>
+        <div class="chips">${doors.map((d) => `<label class="chk"><input type="checkbox" class="id" value="${esc(d.id)}" ${doors.length === 1 ? "checked" : ""}>${esc(d.name)}</label>`).join("")}</div>
+        <div style="margin-top:14px"><div class="hint" style="margin:0 0 6px">Toegangsuren</div><div id="blokken"></div>
+          <button class="btn" id="blok" type="button" style="margin-top:8px"><ha-icon icon="mdi:clock-plus-outline"></ha-icon>Uren toevoegen</button></div>
+        <div style="margin-top:14px">${this._validityRows(null)}</div></div>
+      <div class="voet"><button class="btn primary" id="ok">Maak link en deel</button><button class="btn" id="cancel">Annuleren</button></div></div>`;
     this._tekenBlokken(p);
     p.querySelector("#ok").addEventListener("click", async () => {
       const sel = [...p.querySelectorAll(".id:checked")].map((x) => x.value);
@@ -2366,7 +2371,7 @@ class VtoHandleiding extends VtoBase {
 // exist"). Daarom registreren we opnieuw zolang het nodig is, telkens via window.customElements
 // (het register dat NU actief is) en met een nieuwe subklasse (een constructor mag maar een keer).
 const CARD_CLASSES = [["btechnics-toegang-overzicht", VtoOverzicht], ["btechnics-toegang-historiek", VtoToegang], ["btechnics-toegang-codes", VtoCodes], ["btechnics-toegang-handleiding", VtoHandleiding]];
-const CARDS_VERSION = "0.5.1";
+const CARDS_VERSION = "0.5.2";
 const define = (name, cls) => {
   if (window.customElements.get(name)) return;
   try {
