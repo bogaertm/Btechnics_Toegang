@@ -168,6 +168,19 @@ async def test_pincode_uniek_en_validatie(opgezet):
     await dienst(hass, "persoon_toevoegen", naam="A", pincode="1234", deuren=["Vergaderzaal"])
     with pytest.raises(HomeAssistantError, match="in gebruik"):
         await dienst(hass, "persoon_toevoegen", naam="B", pincode="1234", deuren=["Vergaderzaal"])
+    # geen bevestigingstoets op het klavier: de ene code mag niet het begin van de andere zijn
+    with pytest.raises(HomeAssistantError, match="dezelfde cijfers"):
+        await dienst(hass, "persoon_toevoegen", naam="B2", pincode="12345678", deuren=["Vergaderzaal"])
+    await dienst(hass, "persoon_toevoegen", naam="B3", pincode="24681357", deuren=["Vergaderzaal"])
+    with pytest.raises(HomeAssistantError, match="dezelfde cijfers"):
+        await dienst(hass, "persoon_toevoegen", naam="B4", pincode="2468", deuren=["Vergaderzaal"])
+    from custom_components.btechnics_toegang.register import ToegangFout
+    reg = hass.data[DOMAIN]["register"]
+    with pytest.raises(ToegangFout, match="niet gebruikt worden"):
+        reg.controleer_pin("246813", streng=True)
+    for _ in range(50):
+        c = reg.nieuwe_code()
+        assert not c.startswith("1234") and not "24681357".startswith(c)
     with pytest.raises(HomeAssistantError, match="4 tot 8"):
         await dienst(hass, "persoon_toevoegen", naam="C", pincode="12", deuren=["Vergaderzaal"])
     with pytest.raises(HomeAssistantError, match="onbekende deur"):

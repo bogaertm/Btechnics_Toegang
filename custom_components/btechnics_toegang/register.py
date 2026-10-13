@@ -80,6 +80,12 @@ def _kort(t: datetime | str | None) -> str:
     return t.strftime("%d/%m/%Y %H:%M") if t else ""
 
 
+def botst(a: str, b: str) -> bool:
+    """Twee verschillende codes waarvan de ene het begin is van de andere: zonder bevestigingstoets
+    zou de kortere al openen tijdens het typen van de langere."""
+    return a != b and (a.startswith(b) or b.startswith(a))
+
+
 def zwak(code: str) -> bool:
     """Makkelijk te raden (zelfde regels als Btechnics VTO)."""
     d = [int(c) for c in code]
@@ -266,17 +272,24 @@ class Register:
             raise ToegangFout(f"Een code heeft {PIN_MIN} tot {PIN_MAX} cijfers.")
         if streng and (zwak(pin) or pin in self._pins(behalve)):
             raise ToegangFout("Deze code kan niet gebruikt worden. Kies een andere, minder voor de hand liggende code.")
+        if streng and any(botst(pin, a) for a in self._pins(behalve)):
+            raise ToegangFout("Deze code kan niet gebruikt worden. Kies een andere, minder voor de hand liggende code.")
         for p in self.data["personen"].values():
-            if p["id"] != behalve and p.get("pin") == pin:
-                st = {"blocked": " (geblokkeerd)", "retired": " (uit dienst)"}.get(p["status"], "")
+            if p["id"] == behalve or not p.get("pin"):
+                continue
+            st = {"blocked": " (geblokkeerd)", "retired": " (uit dienst)"}.get(p["status"], "")
+            if p["pin"] == pin:
                 raise ToegangFout(f"code is in gebruik bij {p['naam']}{st}")
+            if botst(pin, p["pin"]):
+                raise ToegangFout(f"code begint met dezelfde cijfers als de code van {p['naam']}{st}; "
+                                  "het klavier heeft geen bevestigingstoets, kies een andere code")
         return pin
 
     def nieuwe_code(self, lengte: int = 6) -> str:
         bezet = self._pins()
         for _ in range(1000):
             c = "".join(secrets.choice("0123456789") for _ in range(lengte))
-            if c not in bezet and not zwak(c):
+            if not zwak(c) and not any(c == b or botst(c, b) for b in bezet):
                 return c
         raise ToegangFout("kon geen vrije code maken")
 
