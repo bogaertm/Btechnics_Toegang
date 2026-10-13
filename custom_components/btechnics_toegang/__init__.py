@@ -208,6 +208,15 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                                             dagen=c.get("dagen", 7))
         return {"url": portaal_url(hass, token), "verloopt": u["verloopt"]}
 
+    @_veilig
+    async def werk(call: ServiceCall) -> ServiceResponse:
+        from .werk import Werk
+        c = call.data
+        res = Werk(hass, reg_()).uitvoeren(c["actie"], c.get("velden") or {}, c.get("door") or "")
+        if c["actie"] in ("deur_toevoegen", "deur_hernoemen"):
+            _herlaad_entiteiten(hass)
+        return res
+
     def dienst(naam, fn, schema, antw=SupportsResponse.NONE):
         async_register_admin_service(hass, DOMAIN, naam, fn, schema, antw)
 
@@ -230,6 +239,9 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     for naam in ("deblokkeren", "uit_dienst", "herstellen", "verwijderen"):
         dienst(f"persoon_{naam}", _statusdienst(naam), persoon)
     dienst("overzicht", overzicht, vol.Schema({}), SupportsResponse.ONLY)
+    # koppeling met Btechnics Work via Btechnics IOT (zie werk.py)
+    dienst("werk", werk, vol.Schema({vol.Required("actie"): cv.string, vol.Optional("velden"): dict,
+                                     vol.Optional("door"): cv.string}), SupportsResponse.ONLY)
     dienst("tablet_koppelcode", tablet_koppelcode, vol.Schema({vol.Required("deur"): cv.string, vol.Optional("naam"): cv.string}),
            SupportsResponse.OPTIONAL)
     dienst("tablet_intrekken", tablet_intrekken, vol.Schema({vol.Required("tablet"): cv.string}))

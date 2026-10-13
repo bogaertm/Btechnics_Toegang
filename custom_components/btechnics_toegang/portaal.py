@@ -134,6 +134,7 @@ class PortaalInfo(_PortaalView):
             if reden:
                 return self._antw({**basis, "soort": "ongeldig", "fout": reden}, HTTPStatus.GONE)
             return self._antw({**basis, "soort": "uitnodiging", "naam": obj.get("naam", ""), "deuren": _deuren(reg, obj["deuren"]),
+                               "voorinvullen": {k: obj.get(k, "") for k in ("voornaam", "achternaam", "telefoon", "email")},
                                "valid_from": obj.get("valid_from"), "valid_until": obj.get("valid_until"),
                                "schema": obj.get("schema") or [], "verloopt": obj["verloopt"]})
         p = obj

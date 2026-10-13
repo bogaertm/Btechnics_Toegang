@@ -333,6 +333,24 @@
           "description": ""
         }
       }
+    },
+    "werk": {
+      "name": "Command from Btechnics Work",
+      "description": "Called by Btechnics IOT for commands from Btechnics Work.",
+      "fields": {
+        "actie": {
+          "name": "Action",
+          "description": "E.g. overzicht, uitnodigen, portaal_link."
+        },
+        "velden": {
+          "name": "Fields",
+          "description": "Data for the action."
+        },
+        "door": {
+          "name": "By",
+          "description": "Who gave the command in Work."
+        }
+      }
     }
   }
 }

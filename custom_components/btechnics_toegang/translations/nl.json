@@ -333,6 +333,24 @@
           "description": ""
         }
       }
+    },
+    "werk": {
+      "name": "Opdracht van Btechnics Work",
+      "description": "Wordt opgeroepen door Btechnics IOT voor opdrachten uit Btechnics Work (overzicht, uitnodigen, portaallink, blokkeren, ...).",
+      "fields": {
+        "actie": {
+          "name": "Actie",
+          "description": "Bv. overzicht, uitnodigen, portaal_link."
+        },
+        "velden": {
+          "name": "Velden",
+          "description": "Gegevens voor de actie."
+        },
+        "door": {
+          "name": "Door",
+          "description": "Wie in Work de opdracht gaf."
+        }
+      }
     }
   }
 }
