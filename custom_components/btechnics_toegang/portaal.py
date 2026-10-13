@@ -23,6 +23,7 @@ from .websocket import portaal_url
 
 _LOGGER = logging.getLogger(__name__)
 HTML = Path(__file__).parent / "frontend" / "portaal.html"
+DEEL_HTML = Path(__file__).parent / "frontend" / "deel.html"
 KOPPEN = {"Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Robots-Tag": "noindex, nofollow"}
 
 
@@ -93,6 +94,18 @@ class PortaalPagina(_PortaalView):
     async def get(self, request: web.Request, token: str) -> web.Response:
         hass = request.app[KEY_HASS]
         html = await hass.async_add_executor_job(HTML.read_text, "utf-8")
+        return web.Response(text=html, content_type="text/html", headers=KOPPEN)
+
+
+class DeelPagina(_PortaalView):
+    """Deelpagina die de HA app in de gewone browser opent: daar werken sms, mail, WhatsApp en kopiëren altijd.
+    De tekst staat enkel na # in het adres en komt dus nooit bij de server."""
+    url = API + "/deel"
+    name = f"api:{DOMAIN}:deel"
+
+    async def get(self, request: web.Request) -> web.Response:
+        hass = request.app[KEY_HASS]
+        html = await hass.async_add_executor_job(DEEL_HTML.read_text, "utf-8")
         return web.Response(text=html, content_type="text/html", headers=KOPPEN)
 
 
@@ -227,7 +240,7 @@ class BeheerFoto(HomeAssistantView):
 
 
 def registreer_portaal(hass) -> None:
-    for v in (PortaalPagina, PortaalInfo, PortaalAanmelden, PortaalWijzig, PortaalFoto, BeheerFoto):
+    for v in (PortaalPagina, DeelPagina, PortaalInfo, PortaalAanmelden, PortaalWijzig, PortaalFoto, BeheerFoto):
         hass.http.register_view(v())
 
 

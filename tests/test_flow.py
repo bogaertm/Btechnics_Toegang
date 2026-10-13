@@ -48,6 +48,10 @@ async def test_volledige_flow(opgezet):
     await dienst(hass, "persoon_toevoegen", naam="Elders", pincode="9988", deuren=["Kelder"])
     assert "pin" not in jan and jan["pincode"] is True
 
+    # deelpagina zonder login, zonder tekst van de server
+    r = await client.get(f"{API}/deel")
+    assert r.status == 200 and "Tekst delen" in await r.text() and r.headers["Cache-Control"] == "no-store"
+
     # zonder sleutel: 401
     assert (await client.get(f"{API}/lijst")).status == 401
 
