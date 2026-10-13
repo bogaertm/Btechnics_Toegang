@@ -316,7 +316,7 @@ class BtxToegang extends HTMLElement {
           Opent met: ${d.open_entiteit ? `<b>${esc(this._entNaam(d.open_entiteit))}</b>` : `<span class="error">nog niets gekozen</span>`}</div>
         <div class="sub">Tablets</div>
         ${tb.length ? tb.map((t) => `<div class="tab"><span class="dot ${t.online ? "on" : "off"}" title="${t.online ? "Online" : "Offline"}"></span>
-            <span class="mt"><b>${esc(t.naam)}</b><div class="hint">${t.online ? "Online" : "Offline"}${t.laatst ? `, laatst gezien ${esc(f.compact(new Date(t.laatst)))}` : ""}${t.app_versie ? ` · app ${esc(t.app_versie)}` : ""}${t.status && t.status.log_wachtrij ? ` · ${t.status.log_wachtrij} logregels in wachtrij` : ""}</div></span>
+            <span class="mt"><b>${esc(t.naam)}</b><div class="hint">${t.online ? "Online" : "Offline"}${t.laatst ? `, laatst gezien ${esc(f.compact(new Date(t.laatst)))}` : ""}${t.app_versie ? ` · app ${esc(t.app_versie)}` : ""}${t.gezicht_sleutel ? " · gezichtsherkenning klaar" : " · nog geen sleutel voor gezichtsherkenning"}${t.status && t.status.log_wachtrij ? ` · ${t.status.log_wachtrij} logregels in wachtrij` : ""}</div></span>
             <span class="acts"><button class="btn danger" data-a="intrekken" data-id="${t.id}"><ha-icon icon="mdi:link-off"></ha-icon> Ontkoppelen</button></span></div>`).join("")
           : `<div class="hint">Nog geen tablet gekoppeld.</div>`}
         ${(() => { const meld = (this._data.log || []).filter((r) => r.deur_id === d.id).slice(0, 5);
