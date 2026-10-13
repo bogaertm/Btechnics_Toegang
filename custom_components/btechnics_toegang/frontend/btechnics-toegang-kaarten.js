@@ -245,6 +245,11 @@ function schemaTekst(schema) {
 }
 /* Delen: WhatsApp, sms, mail, kopiëren en deelmenu. In de HA app (iPhone en Android) opent elke knop de deelpagina
    in de gewone browser, want de app zelf laat sms, mail en het klembord niet altijd toe. */
+function gezichtTekst(e) {
+  const g = e && e.gezicht;
+  if (!g) return "";
+  return g.tablets < g.van ? `Gezicht: op ${g.tablets} van ${g.van} tablets, opnieuw scannen nodig` : "Gezicht: ingesteld";
+}
 function inHaApp(hass) {
   // de HA apps (iPhone, iPad, Mac en Android) zetten "Home Assistant" of "HomeAssistant" in hun user agent
   return !!(/Home ?Assistant/i.test(navigator.userAgent) || (hass && hass.auth && hass.auth.external) || window.externalApp
@@ -1467,6 +1472,7 @@ class VtoCodes extends VtoBase {
       <div class="status"><span class="dot ${e.status === "active" ? "open" : e.status}"></span>${esc(this._statusText(e))}</div>
       ${e.valid_until && e.status !== "retired" ? `<div class="valid">Geldig tot ${esc(this._fmt.dateTime.format(new Date(e.valid_until)))}</div>` : ""}
       ${e.max_uses && e.status !== "retired" ? `<div class="valid">${e.max_uses === 1 ? "Eenmalig" : `${e.uses || 0} van ${e.max_uses} keer gebruikt`}</div>` : ""}
+      ${gezichtTekst(e) ? `<div class="valid">${esc(gezichtTekst(e))}</div>` : ""}
       ${e.status !== "active" && e.doors.length ? `<div class="warn">Nog actief op ${e.doors.map((d) => esc(d.name)).join(", ")}</div>` : ""}
       ${secret}
       ${main}${this._userMode ? "" : `<button class="act" data-hist="${esc(e.name || "")}"><ha-icon icon="mdi:history"></ha-icon>Geschiedenis</button>`}
@@ -1584,7 +1590,8 @@ class VtoCodes extends VtoBase {
       const share = e.kind === "code" ? b("share", "Delen") : "";
       if (this._userMode) return e.status === "retired" ? "" : share + b("retire", "Stoppen", "danger");
       const link = e.soort === "vast" && e.status !== "retired" ? b("link", "Portaallink") : "";
-      if (e.status === "active") return share + link + b("edit", "Aanpassen") + b("block", "Blokkeren") + b("retire", "Uit dienst", "danger");
+      const gz = e.gezicht ? b("face_remove", "Gezicht wissen") : "";
+      if (e.status === "active") return share + link + b("edit", "Aanpassen") + gz + b("block", "Blokkeren") + b("retire", "Uit dienst", "danger");
       if (this._waiting(e)) return share + b("edit", "Aanpassen") + b("unblock", "Nu al activeren") + b("retire", "Uit dienst", "danger");
       if (e.status === "blocked") return b("unblock", "Deblokkeren", "primary") + b("block", "Einde aanpassen") + b("edit", "Aanpassen") + b("retire", "Uit dienst", "danger");
       return b("restore", "Herstellen", "primary") + b("edit", "Aanpassen") + b("forget", "Definitief verwijderen", "danger");
@@ -1611,7 +1618,8 @@ class VtoCodes extends VtoBase {
         ${list.map((e) => `<tr>
           <td><div class="pcell">${this._userMode ? "" : this._avatar(e)}<div>${this._userMode ? `<span class="pname">${esc(e.name || "?")}</span>` : `<button class="pname linkbtn" data-hist="${esc(e.name || "")}" title="Toegangsgeschiedenis van ${esc(e.name || "?")}">${esc(e.name || "?")}</button>`}
             ${[e.telefoon, e.email].filter(Boolean).length ? `<div class="valid">${[e.telefoon, e.email].filter(Boolean).map(esc).join(" · ")}</div>` : ""}
-            ${e.schema && e.schema.length ? `<div class="valid">${esc(schemaTekst(e.schema))}</div>` : ""}</div></div></td>
+            ${e.schema && e.schema.length ? `<div class="valid">${esc(schemaTekst(e.schema))}</div>` : ""}
+            ${gezichtTekst(e) ? `<div class="valid">${esc(gezichtTekst(e))}</div>` : ""}</div></div></td>
           <td class="muted kind">${e.soort === "tijdelijk" ? "tijdelijk" : "vast"}</td>
           <td>${sec(e)}</td>
           <td>${e.doors.map((d) => `<span class="chip">${esc(d.name)}</span>`).join("")}${e.stored.map((d) => `<span class="chip stored" title="werkt nu niet (geblokkeerd, wachtend of uit dienst)">${esc(d.name)}</span>`).join("")}</td>
@@ -1662,6 +1670,8 @@ class VtoCodes extends VtoBase {
     if (act === "retire" && this._userMode) return this._openForm("confirm", e, "retire", `'${esc(e.name)}' stoppen? De code werkt meteen niet meer.`);
     if (act === "retire") return this._openForm("confirm", e, "retire",
       `'${esc(e.name)}' uit dienst halen? De ${e.kind === "badge" ? "badge" : "code"} wordt uitgeschakeld en bewaard, zodat je ze later kan herstellen.`);
+    if (act === "face_remove") return this._openForm("confirm", e, "face_remove",
+      `De gezichtsafdruk van '${esc(e.name)}' wissen? De tablets vergeten ze bij de volgende lijst. De code blijft werken; de medewerker kan opnieuw scannen via zijn portaal.`);
     if (act === "forget") return this._openForm("confirm", e, "forget",
       `'${esc(e.name)}' definitief uit de lijst verwijderen? Dit kan niet ongedaan gemaakt worden. De toegangshistoriek blijft bewaard.`);
     return this._run({ action: act, entry: e.id }, act === "unblock" ? (this._waiting(e) ? "Geactiveerd" : "Gedeblokkeerd") : "Hersteld");
@@ -1841,7 +1851,7 @@ class VtoCodes extends VtoBase {
     if (type === "confirm") {
       p.innerHTML = `<h3>Bevestigen</h3><div class="row">${text}</div>
         <div class="row"><button class="btn danger" id="ok">Bevestigen</button><button class="btn" id="cancel">Annuleren</button></div>`;
-      p.querySelector("#ok").addEventListener("click", () => this._run({ action: act, entry: e.id }, act === "retire" ? (this._userMode ? "Gestopt" : "Uit dienst gehaald") : "Definitief verwijderd"));
+      p.querySelector("#ok").addEventListener("click", () => this._run({ action: act, entry: e.id }, act === "retire" ? (this._userMode ? "Gestopt" : "Uit dienst gehaald") : act === "face_remove" ? "Gezichtsafdruk gewist" : "Definitief verwijderd"));
     } else if (type === "block") {
       // standaard morgen om dit uur, in de tijdzone van Home Assistant (niet die van de browser)
       const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: (this._hass.config || {}).time_zone || undefined,
@@ -2311,7 +2321,7 @@ class VtoHandleiding extends VtoBase {
 // exist"). Daarom registreren we opnieuw zolang het nodig is, telkens via window.customElements
 // (het register dat NU actief is) en met een nieuwe subklasse (een constructor mag maar een keer).
 const CARD_CLASSES = [["btechnics-toegang-overzicht", VtoOverzicht], ["btechnics-toegang-historiek", VtoToegang], ["btechnics-toegang-codes", VtoCodes], ["btechnics-toegang-handleiding", VtoHandleiding]];
-const CARDS_VERSION = "0.4.5";
+const CARDS_VERSION = "0.5.0";
 const define = (name, cls) => {
   if (window.customElements.get(name)) return;
   try {

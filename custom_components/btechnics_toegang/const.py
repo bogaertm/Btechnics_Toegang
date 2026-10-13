@@ -45,3 +45,17 @@ BEDRIJF = {
     "email": "matthias@btechnics.be",
 }
 FOTO_MAP = "btechnics_toegang/fotos"
+
+# ---------------------------------------------------------------- gezichtsherkenning (afdrukken van de gsm)
+GEZICHT_VERSIE = "mfn112-arcface5-v1"   # MobileFaceNet 112x112, ArcFace 5 punten, 192 float32
+GEZICHT_MIN, GEZICHT_MAX = 3, 8         # aantal afdrukken per inschrijving
+GEZICHT_AAD = "btx-gezicht-v1:"         # + persoon_id, als extra gegevens bij AES-GCM
+GEZICHT_TOESTEMMING_VERSIE = "v1"
+GEZICHT_TOESTEMMING = (
+    "Ik geef {bedrijf} de uitdrukkelijke toestemming om van mijn gezicht een gezichtsafdruk te maken, "
+    "enkel om de deuren te openen waarvoor ik toegang heb. De afdruk wordt op mijn eigen gsm berekend en "
+    "versleuteld zodat enkel de deurtablets ze kunnen lezen. Home Assistant en {bedrijf} kunnen ze niet bekijken. "
+    "Van de scan wordt geen foto bewaard. Gezichtsherkenning is vrijwillig: mijn code blijft altijd werken. "
+    "Ik kan mijn toestemming op elk moment intrekken op deze pagina; dan wordt de afdruk gewist, ook op de tablets. "
+    "Ga ik uit dienst, dan wordt de afdruk ook gewist. Verantwoordelijke: {verantwoordelijke}, {adres}, {email}."
+)

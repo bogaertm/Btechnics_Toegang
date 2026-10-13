@@ -24,6 +24,7 @@ from homeassistant.util import dt as dt_util
 from .const import (
     AUDIT_MAX,
     GEBEURTENISSEN_MAX,
+    GEZICHT_AAD,
     KOPPELCODE_GELDIG,
     KOPPELCODE_POGINGEN,
     MODI,
@@ -37,6 +38,7 @@ from .const import (
     UITNODIGING_DAGEN,
 )
 from .geldigheid import controleer_blok
+from .gezicht import GezichtFout, controleer_pakket, publieke_sleutel
 from .hashing import hash_waarde, kaart_norm, pin_norm, sleutel_hash, zout
 
 
@@ -138,7 +140,8 @@ class Register:
                     p[nieuw] = _iso(datetime(d.year, d.month, d.day, *uur, tzinfo=dt_util.get_default_time_zone()))
         for k, v in (("valid_from", None), ("valid_until", None), ("until", None), ("soort", "vast"),
                      ("voornaam", ""), ("achternaam", ""), ("telefoon", ""), ("email", ""), ("foto", False),
-                     ("owner", None), ("bron", "ha"), ("schema", []), ("kaarten", []), ("portaal_hash", None)):
+                     ("owner", None), ("bron", "ha"), ("schema", []), ("kaarten", []), ("portaal_hash", None),
+                     ("gezicht", None)):
             p.setdefault(k, v)
         p.setdefault("gewijzigd", p.get("gemaakt"))
 
@@ -491,6 +494,9 @@ class Register:
         p = self.persoon(pid)
         p["status"], p["until"] = "retired", None
         p["gewijzigd"] = _iso(_nu())
+        if p.get("gezicht"):
+            p["gezicht"] = None
+            reden = ", ".join(x for x in (reden, "gezichtsafdruk gewist") if x)
         self.audit(wie, "uit dienst", p["naam"], p["deuren"], reden)
         self.gewijzigd()
         return p
@@ -551,8 +557,9 @@ class Register:
 
     # ------------------------------------------------------------------ lijst voor een tablet
 
-    def lijst_voor_deur(self, deur_id: str) -> dict:
+    def lijst_voor_deur(self, deur_id: str, tablet: dict | None = None) -> dict:
         d = self.deur(deur_id)
+        kid = (tablet or {}).get("pubkey_id")
         personen = []
         for p in self.data["personen"].values():
             if p["status"] != "active" or deur_id not in p["deuren"]:
@@ -565,12 +572,77 @@ class Register:
                 "schema": p["schema"],
                 "pin": {"zout": p["pin_zout"], "hash": p["pin_hash"], "lengte": len(p["pin"])} if p.get("pin") else None,
                 "kaarten": [{"zout": k["zout"], "hash": k["hash"]} for k in p["kaarten"]],
-                "gezicht": False,
+                "gezicht": self._gezicht_voor(p, kid),
             })
         personen.sort(key=lambda x: x["naam"].lower())
         return {"schema": 1, "versie": self.versie, "gemaakt": _iso(_nu()),
                 "deur": {k: d[k] for k in ("id", "naam", "modus", "modus_sinds", "modus_door")},
                 "hash": {"algoritme": "sha256-iter", "rondes": 2000}, "gezicht_kdf": None, "personen": personen}
+
+    @staticmethod
+    def _gezicht_voor(p: dict, kid: str | None) -> dict | bool:
+        g = p.get("gezicht")
+        if not g or not kid or kid not in g["sleutels"]:
+            return False
+        return {"versie": g["versie"], "iv": g["iv"], "data": g["data"], "sleutel": g["sleutels"][kid],
+                "pubkey_id": kid, "aad": GEZICHT_AAD + p["id"], "aantal": g["aantal"],
+                "toestemming": g["toestemming"], "sinds": g["sinds"]}
+
+    # ------------------------------------------------------------------ gezicht
+
+    def gezicht_tablets(self, p: dict) -> list[dict]:
+        """Tablets aan de deuren van deze persoon die een publieke sleutel gaven."""
+        uit = []
+        for t in self.data["tablets"].values():
+            if t["deur_id"] in p["deuren"] and t.get("pubkey"):
+                uit.append({"pubkey_id": t["pubkey_id"], "pubkey": t["pubkey"], "tablet": t["naam"],
+                            "deur": self.data["deuren"].get(t["deur_id"], {}).get("naam", "?")})
+        return uit
+
+    def gezicht_zetten(self, p: dict, huidige_pin: str, pakket: dict) -> dict:
+        self._portaal_controle(p, huidige_pin)
+        if p["status"] == "retired":
+            raise ToegangFout("Je toegang is stopgezet.")
+        try:
+            g = controleer_pakket(pakket, {t["pubkey_id"] for t in self.gezicht_tablets(p)})
+        except GezichtFout as e:
+            raise ToegangFout(str(e)) from e
+        g["sinds"] = _iso(_nu())
+        p["gezicht"] = g
+        self.audit(f"{p['naam']} (portaal)", "aangepast", p["naam"], p["deuren"],
+                   f"gezichtsafdruk ingesteld ({g['aantal']} afdrukken, {len(g['sleutels'])} tablet(s))")
+        self.gewijzigd()
+        return g
+
+    def gezicht_wissen(self, wie: str, pid: str, huidige_pin: str | None = None) -> None:
+        p = self.persoon(pid)
+        if huidige_pin is not None:
+            self._portaal_controle(p, huidige_pin)
+        if not p.get("gezicht"):
+            return
+        p["gezicht"] = None
+        self.audit(wie, "aangepast", p["naam"], p["deuren"], "gezichtsafdruk gewist")
+        self.gewijzigd()
+
+    def _portaal_controle(self, p: dict, huidige_pin: str) -> None:
+        if p.get("fouten", 0) >= PORTAAL_FOUTEN_MAX:
+            raise ToegangFout("Je portaal is geblokkeerd na te veel foute codes. Vraag een nieuwe link.")
+        if not p.get("pin") or not secrets.compare_digest(pin_norm(huidige_pin or ""), p["pin"]):
+            self.portaal_fout("persoon", p)
+            raise ToegangFout("Je huidige code klopt niet.")
+        p["fouten"] = 0
+
+    def _pubkey_zetten(self, t: dict, waarde) -> None:
+        try:
+            der, kid = publieke_sleutel(waarde)
+        except GezichtFout as e:
+            raise ToegangFout(str(e)) from e
+        if t.get("pubkey_id") == kid:
+            return
+        t["pubkey"], t["pubkey_id"], t["pubkey_sinds"] = der, kid, _iso(_nu())
+        self.audit("tablet", "tablet sleutel", self.data["deuren"].get(t["deur_id"], {}).get("naam", "?"),
+                   soort="deur", detail=f"{t['naam']}: nieuwe sleutel voor gezichtsafdrukken")
+        self.gewijzigd()
 
     # ------------------------------------------------------------------ tablets
 
@@ -586,7 +658,7 @@ class Register:
         self._foute_koppelpogingen = 0
         return code
 
-    def koppelen(self, code: str, toestel_id: str, naam: str | None, app_versie: str | None) -> dict:
+    def koppelen(self, code: str, toestel_id: str, naam: str | None, app_versie: str | None, pubkey=None) -> dict:
         nu = time.monotonic()
         info = self._koppelcodes.get(str(code).strip())
         if not info or info["tot"] < nu:
@@ -604,11 +676,16 @@ class Register:
              "toestel_id": toestel_id or None, "sleutel_hash": sleutel_hash(sleutel), "gekoppeld": _iso(_nu()),
              "app_versie": app_versie, "status": {}, "laatst": None}
         self.data["tablets"][t["id"]] = t
+        if pubkey:
+            try:
+                self._pubkey_zetten(t, pubkey)
+            except ToegangFout:
+                pass  # koppelen lukt toch; de tablet krijgt de fout bij /status
         self.audit("tablet", "tablet gekoppeld", self.data["deuren"][t["deur_id"]]["naam"], soort="deur", detail=t["naam"])
         self.gewijzigd(lijst_veranderd=False)
         if self.bij_nieuwe_tablet:
             self.bij_nieuwe_tablet()
-        return {"tablet_id": t["id"], "deur_id": t["deur_id"], "sleutel": sleutel}
+        return {"tablet_id": t["id"], "deur_id": t["deur_id"], "sleutel": sleutel, "pubkey_id": t.get("pubkey_id")}
 
     def tablet_voor_sleutel(self, sleutel: str) -> dict | None:
         h = sleutel_hash(sleutel)
@@ -625,7 +702,8 @@ class Register:
         self.audit(wie, "tablet ontkoppeld", self.data["deuren"].get(t["deur_id"], {}).get("naam", "?"), soort="deur", detail=t["naam"])
         self.gewijzigd(lijst_veranderd=False)
 
-    def tablet_status(self, tablet: dict, status: dict) -> None:
+    def tablet_status(self, tablet: dict, status: dict) -> str | None:
+        """Geeft een foutmelding over de publieke sleutel terug, of None."""
         tablet["status"] = {k: status.get(k) for k in ("app_versie", "version_code", "versie", "log_wachtrij", "batterij", "nfc")}
         if status.get("app_versie"):
             tablet["app_versie"] = status["app_versie"]
@@ -633,6 +711,12 @@ class Register:
         tablet["laatst_mono"] = time.monotonic()
         self._bewaar()
         async_dispatcher_send(self.hass, SIGNAL_UPDATE)
+        if status.get("pubkey"):
+            try:
+                self._pubkey_zetten(tablet, status["pubkey"])
+            except ToegangFout as e:
+                return str(e)
+        return None
 
     def tablet_online(self, t: dict, binnen: float) -> bool:
         m = t.get("laatst_mono")
@@ -730,12 +814,7 @@ class Register:
     def portaal_wijzigen(self, p: dict, huidige_pin: str, *, telefoon: str | None = None, email: str | None = None,
                          nieuwe_pin: str | None = None) -> dict:
         """Wijziging vanuit het eigen portaal: altijd eerst de huidige code (een doorgestuurde link volstaat niet)."""
-        if p.get("fouten", 0) >= PORTAAL_FOUTEN_MAX:
-            raise ToegangFout("Je portaal is geblokkeerd na te veel foute codes. Vraag een nieuwe link.")
-        if not p.get("pin") or not secrets.compare_digest(pin_norm(huidige_pin), p["pin"]):
-            self.portaal_fout("persoon", p)
-            raise ToegangFout("Je huidige code klopt niet.")
-        p["fouten"] = 0
+        self._portaal_controle(p, huidige_pin)
         wie = f"{p['naam']} (portaal)"
         if nieuwe_pin:
             nieuw = self.controleer_pin(nieuwe_pin, behalve=p["id"], streng=True)

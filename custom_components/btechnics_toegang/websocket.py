@@ -146,8 +146,18 @@ def _entry_out(reg: Register, p: dict, admin: bool = True) -> dict:
     if admin:
         out.update(voornaam=p.get("voornaam", ""), achternaam=p.get("achternaam", ""), telefoon=p.get("telefoon", ""),
                    email=p.get("email", ""), foto=bool(p.get("foto")), foto_v=p.get("foto_v", 0),
-                   portaal=bool(p.get("portaal_hash")), kaarten=len(p.get("kaarten") or []))
+                   portaal=bool(p.get("portaal_hash")), kaarten=len(p.get("kaarten") or []),
+                   gezicht=_gezicht_kort(reg, p))
     return out
+
+
+def _gezicht_kort(reg: Register, p: dict) -> dict | None:
+    g = p.get("gezicht")
+    if not g:
+        return None
+    tablets = reg.gezicht_tablets(p)
+    return {"sinds": g["sinds"], "aantal": g["aantal"], "tablets": sum(1 for t in tablets if t["pubkey_id"] in g["sleutels"]),
+            "van": len(tablets)}
 
 
 def _doors(reg: Register) -> list:
@@ -177,7 +187,7 @@ async def ws_manage_list(hass, connection, msg):
                                        "invites": invites, "pin": {"min": 4, "max": 8}})
 
 
-ACTIES = ["add", "validity", "update", "block", "unblock", "retire", "restore", "forget", "remove"]
+ACTIES = ["add", "validity", "update", "block", "unblock", "retire", "restore", "forget", "remove", "face_remove"]
 
 
 @websocket_api.require_admin
@@ -232,6 +242,8 @@ async def ws_manage_action(hass, connection, msg):
                 reg.vergeten(wie, pid)
             elif a == "remove":
                 reg.verwijderen(wie, pid)
+            elif a == "face_remove":
+                reg.gezicht_wissen(wie, pid)
             res = {"id": pid}
     except ToegangFout as e:
         connection.send_error(msg["id"], "failed", str(e))
@@ -383,7 +395,7 @@ def ws_data(hass, connection, msg):
     d = reg.data
     tablets = [{"id": t["id"], "naam": t["naam"], "deur_id": t["deur_id"], "app_versie": t.get("app_versie"),
                 "gekoppeld": t.get("gekoppeld"), "laatst": t.get("laatst"), "online": reg.tablet_online(t, OFFLINE_NA),
-                "status": t.get("status") or {}} for t in d["tablets"].values()]
+                "status": t.get("status") or {}, "gezicht_sleutel": bool(t.get("pubkey"))} for t in d["tablets"].values()]
     deuren = sorted(d["deuren"].values(), key=lambda x: x["naam"].lower())
     gebeurtenissen = list(reversed(d["gebeurtenissen"][-max(1, min(msg["log"], 500)):]))
     connection.send_result(msg["id"], {"deuren": deuren, "tablets": tablets, "log": gebeurtenissen, "versie": d["versie"],

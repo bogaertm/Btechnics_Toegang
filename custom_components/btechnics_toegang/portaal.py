@@ -6,6 +6,7 @@ Na het aanmelden krijgt de medewerker een nieuwe, vaste link. Wijzigen vraagt al
 from __future__ import annotations
 
 import base64
+import json
 import logging
 import os
 from http import HTTPStatus
@@ -17,13 +18,16 @@ from homeassistant.components import persistent_notification
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.helpers.http import KEY_HASS
 
-from .const import API, BEDRIJF, DOMAIN, FOTO_MAP, FOTO_MAX, PIN_MAX, PIN_MIN
+from .const import API, BEDRIJF, DOMAIN, FOTO_MAP, FOTO_MAX, GEZICHT_MAX, GEZICHT_MIN, GEZICHT_TOESTEMMING_VERSIE, GEZICHT_VERSIE, PIN_MAX, PIN_MIN
+from .gezicht import toestemming_hash, toestemming_tekst
 from .register import Register, ToegangFout
 from .websocket import portaal_url
 
 _LOGGER = logging.getLogger(__name__)
 HTML = Path(__file__).parent / "frontend" / "portaal.html"
 DEEL_HTML = Path(__file__).parent / "frontend" / "deel.html"
+VERSIE = json.loads((Path(__file__).parent / "manifest.json").read_text("utf-8"))["version"]
+GEZICHT_JS = f"/btechnics_toegang_static/gezicht/gezicht.mjs?v={VERSIE}"
 KOPPEN = {"Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Robots-Tag": "noindex, nofollow"}
 
 
@@ -140,7 +144,45 @@ class PortaalInfo(_PortaalView):
                            "valid_from": p.get("valid_from"), "valid_until": p.get("valid_until"), "schema": p.get("schema") or [],
                            "foto": bool(p.get("foto")), "foto_v": p.get("foto_v", 0),
                            "pin_lengte": len(p["pin"]) if p.get("pin") else 0, "recent": recent,
-                           "geblokkeerd": p.get("fouten", 0) >= 10})
+                           "geblokkeerd": p.get("fouten", 0) >= 10, "gezicht": gezicht_info(reg, p)})
+
+
+def gezicht_info(reg: Register, p: dict) -> dict:
+    g = p.get("gezicht")
+    tablets = reg.gezicht_tablets(p)
+    for t in tablets:
+        t["heeft"] = bool(g and t["pubkey_id"] in g["sleutels"])
+    return {"versie": GEZICHT_VERSIE, "min": GEZICHT_MIN, "max": GEZICHT_MAX, "ingesteld": bool(g),
+            "sinds": g["sinds"] if g else None, "aantal": g["aantal"] if g else 0, "tablets": tablets,
+            "aad": "btx-gezicht-v1:" + p["id"], "module": GEZICHT_JS,
+            "toestemming": {"versie": GEZICHT_TOESTEMMING_VERSIE, "tekst": toestemming_tekst(), "hash": toestemming_hash()}}
+
+
+class PortaalGezicht(_PortaalView):
+    """Versleutelde gezichtsafdrukken van de gsm bewaren of wissen. HA kan ze niet lezen."""
+    url = API + "/portaal/{token}/gezicht"
+    name = f"api:{DOMAIN}:portaal:gezicht"
+
+    async def post(self, request: web.Request, token: str) -> web.Response:
+        hass = request.app[KEY_HASS]
+        reg = self._reg(request)
+        gevonden = self._zoek(request, token)
+        if not gevonden or gevonden[0] != "persoon":
+            return self._antw({"fout": "Deze link is niet (meer) geldig."}, HTTPStatus.NOT_FOUND)
+        p = gevonden[1]
+        d = await self._json(request)
+        try:
+            if d.get("wissen"):
+                reg.gezicht_wissen(f"{p['naam']} (portaal)", p["id"], str(d.get("huidige_pin") or ""))
+            else:
+                reg.gezicht_zetten(p, str(d.get("huidige_pin") or ""), d)
+        except ToegangFout as e:
+            return self._antw({"fout": str(e)}, HTTPStatus.BAD_REQUEST)
+        if not d.get("wissen"):
+            persistent_notification.async_create(
+                hass, f"**{p['naam']}** stelde gezichtsherkenning in via het portaal.",
+                title="Btechnics Toegang: gezichtsherkenning", notification_id=f"{DOMAIN}_gezicht_{p['id']}")
+        return self._antw({"ok": True, "gezicht": gezicht_info(reg, p)})
 
 
 class PortaalAanmelden(_PortaalView):
@@ -240,7 +282,7 @@ class BeheerFoto(HomeAssistantView):
 
 
 def registreer_portaal(hass) -> None:
-    for v in (PortaalPagina, DeelPagina, PortaalInfo, PortaalAanmelden, PortaalWijzig, PortaalFoto, BeheerFoto):
+    for v in (PortaalPagina, DeelPagina, PortaalInfo, PortaalGezicht, PortaalAanmelden, PortaalWijzig, PortaalFoto, BeheerFoto):
         hass.http.register_view(v())
 
 

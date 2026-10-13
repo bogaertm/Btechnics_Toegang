@@ -59,7 +59,7 @@ class KoppelView(_TabletView):
         try:
             antw = _reg(hass).koppelen(
                 str(data.get("code", "")), str(data.get("toestel_id") or ""),
-                data.get("naam"), data.get("app_versie"),
+                data.get("naam"), data.get("app_versie"), data.get("pubkey"),
             )
         except ToegangFout as e:
             _LOGGER.warning("Koppelen geweigerd vanaf %s: %s", request.remote, e)
@@ -94,11 +94,11 @@ class LijstView(_TabletView):
         if not tablet:
             return _fout(HTTPStatus.UNAUTHORIZED, "niet gekoppeld")
         reg = _reg(request.app[KEY_HASS])
-        etag = f'"{reg.versie}"'
+        etag = f'"{reg.versie}-{(tablet.get("pubkey_id") or "")[:12]}"'
         if request.headers.get("If-None-Match") == etag:
             return web.Response(status=HTTPStatus.NOT_MODIFIED, headers={"ETag": etag})
         try:
-            lijst = reg.lijst_voor_deur(tablet["deur_id"])
+            lijst = reg.lijst_voor_deur(tablet["deur_id"], tablet)
         except ToegangFout as e:
             return _fout(HTTPStatus.NOT_FOUND, str(e))
         return web.json_response(lijst, headers={"ETag": etag})
@@ -144,8 +144,11 @@ class StatusView(_TabletView):
         tablet = self._tablet(request)
         if not tablet:
             return _fout(HTTPStatus.UNAUTHORIZED, "niet gekoppeld")
-        _reg(request.app[KEY_HASS]).tablet_status(tablet, await self._json(request))
-        return self.json({"ok": True})
+        fout = _reg(request.app[KEY_HASS]).tablet_status(tablet, await self._json(request))
+        antw = {"ok": True, "pubkey_id": tablet.get("pubkey_id")}
+        if fout:
+            antw["pubkey_fout"] = fout
+        return self.json(antw)
 
 
 class OpenView(_TabletView):
