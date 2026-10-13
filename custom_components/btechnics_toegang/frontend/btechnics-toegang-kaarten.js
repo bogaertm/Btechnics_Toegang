@@ -127,6 +127,7 @@ function closePhoto(root) {
 }
 
 const BASE_CSS = `
+  [hidden] { display: none !important; }
   :host { display: block; min-width: 0; }
   ha-card { padding: 16px; }
   .muted { color: var(--secondary-text-color); }
@@ -242,6 +243,71 @@ function schemaTekst(schema) {
   if (!schema || !schema.length) return "Altijd";
   return schema.map((b) => `${dagenTekst(b.dagen)} ${b.van.replace(":", "u")} tot ${b.tot.replace(":", "u")}${b.tot <= b.van ? " (volgende dag)" : ""}`).join("; ");
 }
+/* Delen: WhatsApp, sms, mail, kopiëren en deelmenu. In de HA app (iPhone en Android) opent elke knop de deelpagina
+   in de gewone browser, want de app zelf laat sms, mail en het klembord niet altijd toe. */
+function inHaApp(hass) {
+  return !!((hass && hass.auth && hass.auth.external) || window.externalApp
+    || (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.externalBus));
+}
+const APPLE = /iPhone|iPad|iPod|Macintosh/.test(navigator.userAgent);
+function deelLinks(tekst, onderwerp, app) {
+  const t = encodeURIComponent(tekst);
+  if (app) {
+    const basis = `${location.origin}/api/btechnics_toegang/deel#s=${encodeURIComponent(onderwerp)}&b=${t}&w=`;
+    return { wa: basis + "wa", sms: basis + "sms", mail: basis + "mail", menu: basis + "menu" };
+  }
+  return { wa: `https://wa.me/?text=${t}`, sms: (APPLE ? "sms:&body=" : "sms:?body=") + t,
+    mail: `mailto:?subject=${encodeURIComponent(onderwerp)}&body=${t}`, menu: null };
+}
+async function kopieer(tekst, veld) {
+  if (navigator.clipboard && window.isSecureContext) {
+    try { await navigator.clipboard.writeText(tekst); return true; } catch (err) { /* verder met de oude manier */ }
+  }
+  // oude manier: tijdelijk tekstvak buiten de shadow DOM (werkt ook in Safari en de Android app)
+  const el = document.createElement("textarea");
+  el.value = tekst; el.setAttribute("readonly", ""); el.style.cssText = "position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;";
+  document.body.appendChild(el);
+  el.focus(); el.select(); el.setSelectionRange(0, tekst.length);
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch (err) { ok = false; }
+  el.remove();
+  if (!ok && veld) { veld.focus(); veld.select(); veld.setSelectionRange(0, tekst.length); }
+  return ok;
+}
+function deelKnoppenHtml() {
+  return `<a class="btn primary" id="s_wa" target="_blank" rel="noopener">WhatsApp</a><a class="btn" id="s_sms">Sms</a><a class="btn" id="s_mail">Mail</a>
+        <button class="btn" id="s_copy">Kopieer tekst</button><button class="btn" id="s_native" hidden>Deelmenu</button>`;
+}
+function deelKnoppenKoppelen(kaart, p, onderwerp) {
+  const $ = (id) => p.querySelector("#" + id);
+  const app = inHaApp(kaart._hass);
+  const upd = () => {
+    const l = deelLinks($("stext").value, onderwerp, app);
+    for (const k of ["wa", "sms", "mail"]) {
+      $("s_" + k).href = l[k];
+      if (app || k === "wa") $("s_" + k).target = "_blank"; else $("s_" + k).removeAttribute("target");
+      $("s_" + k).rel = "noopener";
+    }
+    $("s_native").dataset.url = l.menu || "";
+  };
+  $("stext").addEventListener("input", upd);
+  upd();
+  $("s_copy").addEventListener("click", async () => {
+    const ok = await kopieer($("stext").value, $("stext"));
+    const k = $("s_copy");
+    k.textContent = ok ? "Gekopieerd" : "Niet gelukt";
+    setTimeout(() => { k.textContent = "Kopieer tekst"; }, 2500);
+    kaart._message(ok ? "Tekst gekopieerd." : "Kopiëren lukt hier niet. De tekst is geselecteerd: hou ze ingedrukt en kies Kopiëren, of gebruik Deelmenu.", ok);
+  });
+  if (navigator.share || app) {
+    $("s_native").hidden = false;
+    $("s_native").addEventListener("click", () => {
+      if (navigator.share) return navigator.share({ text: $("stext").value }).catch(() => {});
+      window.open($("s_native").dataset.url, "_blank", "noopener");
+    });
+  }
+}
+
 /* Foto uit het portaal: enkel beheerders, via een ondertekend pad. */
 const FOTO_SRC = new Map();
 async function fotoSrc(hass, id, v) {
@@ -1756,29 +1822,11 @@ class VtoCodes extends VtoBase {
       ${note ? `<div class="row msg ok">${esc(note)}</div>` : ""}
       <div class="row" style="display:block"><textarea id="stext">${esc(this._shareText(e))}</textarea></div>
       <div class="row sendbar">
-        <a class="btn primary" id="s_wa" target="_blank" rel="noopener">WhatsApp</a>
-        <a class="btn" id="s_sms">Sms</a>
-        <a class="btn" id="s_mail">Mail</a>
-        <button class="btn" id="s_copy">Kopieer tekst</button>
-        ${navigator.share ? `<button class="btn" id="s_native">Deelmenu</button>` : ""}
+        ${deelKnoppenHtml()}
         <button class="btn" id="cancel">Sluiten</button></div>
       <div class="row muted">De tekst kun je hierboven nog aanpassen. WhatsApp, sms en mail openen met de tekst klaar; je kiest daar zelf de ontvanger.</div></div>`;
     const $ = (id) => p.querySelector("#" + id);
-    const upd = () => {
-      const t = encodeURIComponent($("stext").value);
-      $("s_wa").href = `https://wa.me/?text=${t}`;
-      $("s_sms").href = `sms:?&body=${t}`;
-      $("s_mail").href = `mailto:?subject=${encodeURIComponent("Je toegangscode voor Btechnics")}&body=${t}`;
-    };
-    $("stext").addEventListener("input", upd);
-    upd();
-    $("s_copy").addEventListener("click", async () => {
-      const txt = $("stext").value;
-      try { await navigator.clipboard.writeText(txt); }
-      catch (err) { $("stext").select(); document.execCommand("copy"); }
-      this._message("Tekst gekopieerd.", true);
-    });
-    if ($("s_native")) $("s_native").addEventListener("click", () => navigator.share({ text: $("stext").value }).catch(() => {}));
+    deelKnoppenKoppelen(this, p, "Je toegangscode voor Btechnics");
     $("cancel").addEventListener("click", () => this._closeForm());
     p.classList.add("on");
     if (!this._mobile) p.scrollIntoView({ block: "nearest" });
@@ -1953,18 +2001,10 @@ class VtoCodes extends VtoBase {
     this._form = { type: "share" };
     p.innerHTML = `<div class="share"><h3>${esc(titel)}</h3>${note ? `<div class="row msg ok">${esc(note)}</div>` : ""}
       <div class="row" style="display:block"><textarea id="stext">${esc(tekst)}</textarea></div>
-      <div class="row sendbar"><a class="btn primary" id="s_wa" target="_blank" rel="noopener">WhatsApp</a><a class="btn" id="s_sms">Sms</a><a class="btn" id="s_mail">Mail</a>
-        <button class="btn" id="s_copy">Kopieer tekst</button>${navigator.share ? `<button class="btn" id="s_native">Deelmenu</button>` : ""}<button class="btn" id="cancel">Sluiten</button></div>
+      <div class="row sendbar">${deelKnoppenHtml()}<button class="btn" id="cancel">Sluiten</button></div>
       <div class="row muted">Deze link is persoonlijk: wie hem heeft, kan de pagina openen. Wijzigen vraagt altijd de eigen code.</div></div>`;
     const $ = (id) => p.querySelector("#" + id);
-    const upd = () => { const t = encodeURIComponent($("stext").value);
-      $("s_wa").href = `https://wa.me/?text=${t}`; $("s_sms").href = `sms:?&body=${t}`;
-      $("s_mail").href = `mailto:?subject=${encodeURIComponent(onderwerp)}&body=${t}`; };
-    $("stext").addEventListener("input", upd); upd();
-    $("s_copy").addEventListener("click", async () => { const txt = $("stext").value;
-      try { await navigator.clipboard.writeText(txt); } catch (err) { $("stext").select(); document.execCommand("copy"); }
-      this._message("Tekst gekopieerd.", true); });
-    if ($("s_native")) $("s_native").addEventListener("click", () => navigator.share({ text: $("stext").value }).catch(() => {}));
+    deelKnoppenKoppelen(this, p, onderwerp);
     $("cancel").addEventListener("click", () => this._closeForm());
     p.classList.add("on");
     if (!this._mobile) p.scrollIntoView({ block: "nearest" });
@@ -2270,7 +2310,7 @@ class VtoHandleiding extends VtoBase {
 // exist"). Daarom registreren we opnieuw zolang het nodig is, telkens via window.customElements
 // (het register dat NU actief is) en met een nieuwe subklasse (een constructor mag maar een keer).
 const CARD_CLASSES = [["btechnics-toegang-overzicht", VtoOverzicht], ["btechnics-toegang-historiek", VtoToegang], ["btechnics-toegang-codes", VtoCodes], ["btechnics-toegang-handleiding", VtoHandleiding]];
-const CARDS_VERSION = "0.4.3";
+const CARDS_VERSION = "0.4.4";
 const define = (name, cls) => {
   if (window.customElements.get(name)) return;
   try {
