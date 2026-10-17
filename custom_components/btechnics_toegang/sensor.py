@@ -50,7 +50,9 @@ class LaatsteToegang(ToegangEntiteit, SensorEntity):
         if not r:
             return {}
         return {"door_id": self.deur_id, "door": r["door"], "method": r["method"], "opened": r["opened"],
-                "time": ts_lokaal(r["ts"]).isoformat(), "ts": r["ts"]}
+                "time": ts_lokaal(r["ts"]).isoformat(), "ts": r["ts"],
+                # verandert als een foto later binnenkomt, zodat de kaart Deuren zich meteen opnieuw tekent
+                "fotos": sum(1 for x in (self.tg.recent.get(self.deur_id) or []) if x.get("photo"))}
 
 
 class Codes(ToegangEntiteit, SensorEntity):
