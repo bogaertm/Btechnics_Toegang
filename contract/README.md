@@ -10,6 +10,7 @@ Vergeleken worden de velden en hun types; ids, tijden en hashes verschillen per 
 | lijst.json | GET /lijst, ETag en 304, persoon zonder en met gezicht |
 | gezicht.json | gezichtspakket, ontsleutelbaar met testsleutel-tablet.pem |
 | log.json | POST /log met toegang, geweigerd, vermoedelijke_foto (score) en systeem; verwachte historiek |
+| foto.json | POST /foto: foto van de tablet bij een logregel (zelfde uid) |
 | open.json | POST /open, 200 en 403 |
 | status.json | POST /status met schema, personen, gezichten, laatste_lijst |
 | testsleutel-tablet.pem | RSA sleutel enkel voor tests, nooit op een echte tablet |

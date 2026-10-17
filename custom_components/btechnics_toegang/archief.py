@@ -103,6 +103,10 @@ class Archief:
         with self._lock, closing(self._conn()) as c, c:
             return c.execute("DELETE FROM access WHERE ts < ?", (cutoff,)).rowcount
 
+    def foto_zetten(self, uid: str, foto: str, door_id: str) -> int:
+        with self._lock, closing(self._conn()) as c, c:
+            return c.execute("UPDATE access SET foto = ? WHERE uid = ? AND door_id = ?", (foto, uid, door_id)).rowcount
+
     def fotos_in_gebruik(self) -> set:
         with closing(self._conn()) as c:
             return {r[0] for r in c.execute("SELECT foto FROM access WHERE foto <> ''")}

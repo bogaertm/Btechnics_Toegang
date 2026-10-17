@@ -118,6 +118,16 @@ async def test_volledige_flow(opgezet):
     rij = [r for r in await hass.async_add_executor_job(arch.recent, antw["deur_id"], 10) if r["method"] == "gezicht (vermoedelijke foto)"]
     assert rij and not rij[0]["opened"]
     assert any("vermoedelijke foto" in (n.get("title") or "") for n in hass.data["persistent_notification"].values())
+    # foto van de tablet die VOOR de logregel binnenkomt
+    import base64
+    r = await client.post(f"{API}/foto", headers=kop, json={"uid": "u9", "foto": base64.b64encode(b"\xff\xd8\xff\xd9").decode()})
+    assert r.status == 200
+    await client.post(f"{API}/log", headers=kop, json={"items": [{"uid": "u9", "tijd": "2026-10-11T17:09:30+02:00", "soort": "toegang",
+                                                                 "methode": "pin", "persoon_id": jan["id"]}]})
+    await hass.async_block_till_done()
+    fid = (await r.json())["foto"]
+    rijen = await hass.async_add_executor_job(arch.recent, antw["deur_id"], 10)
+    assert any(x.get("photo") == fid for x in rijen)
     # meetstand van de app: soort systeem blijft systeem (geen weigering, geen extra HA melding)
     meldingen = len(hass.data["persistent_notification"])
     meet = {"uid": "u4", "tijd": "2026-10-11T17:09:00+02:00", "soort": "systeem", "methode": "gezicht",
@@ -150,7 +160,7 @@ async def test_volledige_flow(opgezet):
     assert r.status == 200
     assert len(calls) == 2
     # HA schrijft zelf geen dubbele regel bij /open (de tablet logt zelf)
-    assert len(await hass.async_add_executor_job(arch.recent, antw["deur_id"], 10)) == 3
+    assert len(await hass.async_add_executor_job(arch.recent, antw["deur_id"], 10)) == 4
 
     # status: tablet online
     r = await client.post(f"{API}/status", headers=kop, json={"app_versie": "1.60", "version_code": 54,
