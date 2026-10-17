@@ -150,6 +150,9 @@ async def test_volledige_flow(opgezet):
     fid = (await r.json())["foto"]
     rijen = await hass.async_add_executor_job(arch.recent, antw["deur_id"], 10)
     assert rijen[0]["name"] == "Op afstand" and rijen[0].get("photo") == fid
+    await hass.async_block_till_done()
+    sensor = next(s for s in hass.states.async_all("sensor") if s.attributes.get("door_id") == antw["deur_id"] and "fotos" in s.attributes)
+    assert sensor.attributes["fotos"] >= 2   # de sensor (en dus de kaart) ziet de nieuwe foto meteen
     assert reg.fotovragen_ophalen(antw["tablet_id"]) == [] and v <= reg.versie
     # openen: Jan mag, onbekende niet, Elders niet (geen recht op deze deur)
     r = await client.post(f"{API}/open", headers=kop, json={"methode": "pin", "persoon_id": jan["id"]})
