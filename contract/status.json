@@ -1,0 +1,18 @@
+{
+  "_uitleg": "POST /status elke minuut. pubkey mag elke keer mee. personen, gezichten en laatste_lijst toont het dashboard (gezichten in orde als gelijk aan wat HA verwacht).",
+  "verzoek": {
+    "app_versie": "1.64",
+    "version_code": 58,
+    "versie": 8,
+    "log_wachtrij": 0,
+    "schema": 1,
+    "personen": 2,
+    "gezichten": 1,
+    "laatste_lijst": "2026-10-17T16:30:00+02:00",
+    "pubkey": "<SPKI DER base64>"
+  },
+  "antwoord": {
+    "ok": true,
+    "pubkey_id": "19cee8eea832e61bcc8ff934775676727b53b2173da059af2abf57c00ae9a4fd"
+  }
+}

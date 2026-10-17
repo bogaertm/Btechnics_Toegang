@@ -91,7 +91,12 @@ async def test_gezicht_keten(hass_klaar, hass_ws_client, hass_client_no_auth):
     # een andere tablet (nieuwe sleutel) krijgt niets
     priv2, pub2 = _sleutelpaar()
     code = (await hass.services.async_call(DOMAIN, "tablet_koppelcode", {"deur": "Vergaderzaal"}, blocking=True, return_response=True))["code"]
+    gemeld = []
+    from homeassistant.core import callback
+    hass.bus.async_listen(f"{DOMAIN}_gezicht_ontbreekt", callback(lambda e: gemeld.append(e.data)))
     k2 = await (await client.post(f"{API}/koppel", json={"code": code, "toestel_id": "t2", "pubkey": pub2})).json()
+    await hass.async_block_till_done()
+    assert gemeld and gemeld[0]["personen"][0]["naam"] == "Lien Maes"
     l2 = await (await client.get(f"{API}/lijst", headers={"Authorization": f"Bearer {k2['sleutel']}"})).json()
     assert l2["personen"][0]["gezicht"] is False
     info = await (await client.get(eigen + "/info")).json()

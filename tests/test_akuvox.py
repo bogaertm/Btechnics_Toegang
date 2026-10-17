@@ -1,0 +1,106 @@
+import asyncio
+"""Akuvox S532 sync tegen een nagebootst toestel: enkel eigen gebruikers vanaf 700001, SmartPlus blijft onaangeroerd."""
+from datetime import timedelta
+
+from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
+from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMockResponse
+
+from homeassistant.util import dt as dt_util
+
+from custom_components.btechnics_toegang.const import DOMAIN
+
+IP = "10.9.8.7"
+
+
+class NepAkuvox:
+    def __init__(self):
+        self.users = {"1": {"ID": "1", "Name": "Cloud Jan", "UserID": "12", "PrivatePIN": "1111", "Source": "Cloud", "Schedule-Relay": "1001-1;"},
+                      "2": {"ID": "2", "Name": "Vreemd", "UserID": "700500", "PrivatePIN": "2222", "Source": "Local", "Schedule-Relay": "1001-1;"}}
+        self.n = 2
+        self.log = []
+
+    async def get(self, method, url, data):
+        if url.path == "/api/user/get":
+            return AiohttpClientMockResponse(method, url, json={"retcode": 0, "data": {"num": len(self.users), "item": list(self.users.values())}})
+        return AiohttpClientMockResponse(method, url, json={"retcode": 0, "data": {"num": len(self.log), "item": self.log}})
+
+    async def post(self, method, url, data):
+        actie = url.path.rsplit("/", 1)[1]
+        for it in data["data"]["item"]:
+            if actie == "add":
+                self.n += 1
+                self.users[str(self.n)] = {"ID": str(self.n), "Source": "Local", **it}
+            elif actie == "set":
+                self.users[it["ID"]].update(it)
+            elif actie == "del":
+                del self.users[it["ID"]]
+        return AiohttpClientMockResponse(method, url, json={"retcode": 0, "message": "OK"})
+
+
+async def test_akuvox_sync(hass, aioclient_mock):
+    await hass.config.async_set_time_zone("Europe/Brussels")
+    nep = NepAkuvox()
+    aioclient_mock.get(f"https://{IP}/api/user/get", side_effect=nep.get)
+    aioclient_mock.get(f"https://{IP}/api/doorlog/get", side_effect=nep.get)
+    for a in ("add", "set", "del"):
+        aioclient_mock.post(f"https://{IP}/api/user/{a}", side_effect=nep.post)
+    entry = MockConfigEntry(domain=DOMAIN, data={})
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    reg = hass.data[DOMAIN]["register"]
+    voordeur = reg.deur_toevoegen("Voordeur", wie="test")
+    hass.config_entries.async_update_entry(entry, options={"akuvox_aan": True, "akuvox_ip": IP, "akuvox_gebruiker": "api",
+                                                           "akuvox_wachtwoord": "geheim", "akuvox_deur": voordeur["id"]})
+    await hass.async_block_till_done()
+    reg = hass.data[DOMAIN]["register"]
+    ak = hass.data[DOMAIN]["akuvox"]
+    assert ak.aan
+    # persoon met recht op de voordeur komt erop, iemand zonder dat recht niet
+    await hass.services.async_call(DOMAIN, "deur_toevoegen", {"naam": "Binnen"}, blocking=True)
+    jan = reg.toevoegen("test", naam="Jan Peeters", pin="583920", deuren=[voordeur["id"]])
+    reg.toevoegen("test", naam="Enkel Binnen", pin="472910", deuren=["Binnen"])
+    v = await ak.async_sync()
+    assert v["toegevoegd"] == ["Jan Peeters"] and not v["fouten"]
+    nieuw = [u for u in nep.users.values() if u["Name"] == "Jan Peeters"][0]
+    assert nieuw["UserID"] == "700001" and nieuw["PrivatePIN"] == "583920" and nieuw["Schedule-Relay"] == "1001-1;"
+    assert ak.status["vreemd_boven_start"] == 1 and ak.status["eigen"] == 1
+    # code wijzigen: set, geen nieuwe gebruiker
+    reg.bijwerken("test", jan["id"], pin="694031")
+    v = await ak.async_sync()
+    assert v["gewijzigd"] == ["Jan Peeters"] and nieuw["PrivatePIN"] == "694031" and len(nep.users) == 3
+    # blokkeren: weg van het toestel; SmartPlus en de vreemde 700500 blijven
+    reg.blokkeren("test", jan["id"])
+    v = await ak.async_sync()
+    assert v["gewist"] == ["Jan Peeters"] and sorted(nep.users) == ["1", "2"]
+    assert ak._staat["gebruikers"][jan["id"]]["userid"] == "700001"
+    # buiten de uren: niet op het toestel
+    reg.deblokkeren("test", jan["id"])
+    nu = dt_util.now()
+    andere_dag = (nu.isoweekday() % 7) + 1
+    reg.bijwerken("test", jan["id"], schema=[{"dagen": [andere_dag], "van": "08:00", "tot": "09:00"}])
+    v = await ak.async_sync()
+    assert not v["toegevoegd"] and sorted(nep.users) == ["1", "2"]
+    # deurlog naar de historiek
+    reg.bijwerken("test", jan["id"], schema=[])
+    await ak.async_sync()
+    nep.log = [{"ID": "41", "Date": nu.strftime("%Y-%m-%d"), "Time": nu.strftime("%H:%M:%S"), "Name": "Jan Peeters",
+                "UserID": "700001", "Type": "PrivatePIN", "Status": "Succ"},
+               {"ID": "42", "Date": nu.strftime("%Y-%m-%d"), "Time": nu.strftime("%H:%M:%S"), "Name": "Cloud Jan",
+                "UserID": "12", "Type": "Card", "Status": "Failed"}]
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(minutes=1, seconds=5))
+    await hass.async_block_till_done()
+    for _ in range(5):
+        await asyncio.sleep(0.05)
+        await hass.async_block_till_done()
+    rij = await hass.async_add_executor_job(hass.data[DOMAIN]["toegang"].archief.recent, voordeur["id"], 10)
+    assert {(r["name"], r["method"], bool(r["opened"])) for r in rij} == {("Jan Peeters", "code", True), ("Cloud Jan", "badge", False)}
+    # tweede keer niets dubbel
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(minutes=2, seconds=10))
+    for _ in range(5):
+        await asyncio.sleep(0.05)
+        await hass.async_block_till_done()
+    assert len(await hass.async_add_executor_job(hass.data[DOMAIN]["toegang"].archief.recent, voordeur["id"], 10)) == 2
+    # diagnose (enkel lezen)
+    t = await hass.services.async_call(DOMAIN, "akuvox_test", {}, blocking=True, return_response=True)
+    assert t["toestel"]["boven_700000_niet_van_ons"] == ["700500"] and t["toestel"]["van_ons"] == 1

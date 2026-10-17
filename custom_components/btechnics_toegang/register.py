@@ -22,6 +22,7 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    DOMAIN,
     AUDIT_MAX,
     GEBEURTENISSEN_MAX,
     GEZICHT_AAD,
@@ -29,6 +30,7 @@ from .const import (
     KOPPELCODE_POGINGEN,
     MODI,
     MODUS_STANDAARD,
+    PULS_STANDAARD,
     PIN_MAX,
     PIN_MIN,
     PORTAAL_FOUTEN_MAX,
@@ -109,6 +111,7 @@ class Register:
         self._foute_koppelpogingen = 0
         self._wijziging = asyncio.Condition()
         self.bij_nieuwe_tablet = None
+        self.bij_gewijzigd = None   # bv. Akuvox sync (met vertraging)
         self.bij_toegang = None          # callback(regel) naar het archief
 
     # ------------------------------------------------------------------ opslag
@@ -121,6 +124,8 @@ class Register:
         oud_log = data.pop("log", None)
         for t in data["tablets"].values():
             t.pop("laatst_mono", None)
+        for d in data["deuren"].values():
+            d.setdefault("puls_s", PULS_STANDAARD)
         for p in data["personen"].values():
             self._migreer(p)
         self.data = data
@@ -157,6 +162,8 @@ class Register:
         async_dispatcher_send(self.hass, SIGNAL_UPDATE)
         # Btechnics IOT stuurt dan (na 10 s rust) een nieuwe status naar Work
         async_dispatcher_send(self.hass, "btechnics_branding_status_changed")
+        if self.bij_gewijzigd:
+            self.bij_gewijzigd()
         self.hass.async_create_task(self._wek())
 
     async def _wek(self) -> None:
@@ -208,16 +215,23 @@ class Register:
             raise ToegangFout("Geef de deur een naam")
         if any(d["naam"].lower() == naam.lower() for d in self.data["deuren"].values()):
             raise ToegangFout(f"Er bestaat al een deur {naam}")
-        d = {"id": _id("d"), "naam": naam, "open_entiteit": open_entiteit or None,
+        d = {"id": _id("d"), "naam": naam, "open_entiteit": open_entiteit or None, "puls_s": PULS_STANDAARD,
              "modus": MODUS_STANDAARD, "modus_sinds": _iso(_nu()), "modus_door": "ha"}
         self.data["deuren"][d["id"]] = d
         self.audit(wie, "toegevoegd", naam, soort="deur")
         self.gewijzigd()
         return d
 
-    def deur_wijzigen(self, deur_id: str, naam: str | None = None, open_entiteit: str | None = None, wie: str = "") -> dict:
+    def deur_wijzigen(self, deur_id: str, naam: str | None = None, open_entiteit: str | None = None, wie: str = "",
+                      puls_s: int | None = None) -> dict:
         d = self.deur(deur_id)
         detail = []
+        if puls_s is not None:
+            if not isinstance(puls_s, int) or not 0 <= puls_s <= 60:
+                raise ToegangFout("pulsduur is 0 tot 60 seconden")
+            if puls_s != d.get("puls_s", PULS_STANDAARD):
+                detail.append(f"pulsduur {puls_s} s")
+                d["puls_s"] = puls_s
         if naam is not None and naam.strip() and naam.strip() != d["naam"]:
             detail.append(f"naam {d['naam']} naar {naam.strip()}")
             d["naam"] = naam.strip()
@@ -642,6 +656,19 @@ class Register:
         if t.get("pubkey_id") == kid:
             return
         t["pubkey"], t["pubkey_id"], t["pubkey_sinds"] = der, kid, _iso(_nu())
+        # wie al een gezicht had, mist het nu op deze tablet: melden (Work mailt dan de portaallink om opnieuw te scannen)
+        missen = [p for p in self.data["personen"].values()
+                  if p.get("gezicht") and p["status"] != "retired" and t["deur_id"] in p["deuren"] and kid not in p["gezicht"]["sleutels"]]
+        if missen:
+            self.hass.bus.async_fire(f"{DOMAIN}_gezicht_ontbreekt", {"tablet": t["naam"], "deur_id": t["deur_id"],
+                                                                     "personen": [{"persoon_id": p["id"], "naam": p["naam"],
+                                                                                   "werk_id": p.get("werk_id")} for p in missen]})
+            from homeassistant.components import persistent_notification
+            persistent_notification.async_create(
+                self.hass, f"Tablet **{t['naam']}** heeft een nieuwe sleutel. Gezichtsherkenning werkt daar nog niet voor: "
+                f"{', '.join(p['naam'] for p in missen)}. Zij scannen opnieuw via hun portaallink "
+                "(Btechnics Work stuurt die automatisch voor gekoppelde medewerkers).",
+                title="Btechnics Toegang: opnieuw scannen", notification_id=f"{DOMAIN}_gezicht_{t['id']}")
         self.audit("tablet", "tablet sleutel", self.data["deuren"].get(t["deur_id"], {}).get("naam", "?"),
                    soort="deur", detail=f"{t['naam']}: nieuwe sleutel voor gezichtsafdrukken")
         self.gewijzigd()
@@ -706,7 +733,8 @@ class Register:
 
     def tablet_status(self, tablet: dict, status: dict) -> str | None:
         """Geeft een foutmelding over de publieke sleutel terug, of None."""
-        tablet["status"] = {k: status.get(k) for k in ("app_versie", "version_code", "versie", "log_wachtrij", "batterij", "nfc")}
+        tablet["status"] = {k: status.get(k) for k in ("app_versie", "version_code", "versie", "log_wachtrij", "batterij", "nfc",
+                                                       "schema", "personen", "gezichten", "laatste_lijst", "echtheid")}
         if status.get("app_versie"):
             tablet["app_versie"] = status["app_versie"]
         tablet["laatst"] = _iso(_nu())
@@ -719,6 +747,14 @@ class Register:
             except ToegangFout as e:
                 return str(e)
         return None
+
+    def gezichten_verwacht(self, t: dict) -> int:
+        """Aantal personen waarvoor deze tablet een gezichtspakket in zijn lijst krijgt."""
+        kid = t.get("pubkey_id")
+        if not kid:
+            return 0
+        return sum(1 for p in self.data["personen"].values() if p["status"] == "active" and t["deur_id"] in p["deuren"]
+                   and p.get("gezicht") and kid in p["gezicht"]["sleutels"])
 
     def tablet_online(self, t: dict, binnen: float) -> bool:
         m = t.get("laatst_mono")

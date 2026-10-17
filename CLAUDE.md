@@ -1,0 +1,40 @@
+# Btechnics_Toegang (HA integratie btechnics_toegang)
+
+Home Assistant integratie voor deurtoegang bij Btechnics: personen, codes, badges, gezichten, deuren, tablets (app Btechnics Deur),
+portaal voor medewerkers en sync naar de Akuvox S532. HA (Btechnics HA, 192.168.1.117, extern https://iot.bogaert.me) is de baas.
+
+## Samenwerking via de postbus
+
+Map op de Mac: `~/Documents/Claude/Projects/Postbus Deurtoegang` (iCloud, op beide Macs).
+
+| Bestand | Wie leest | Wie schrijft |
+|---|---|---|
+| naar-ha.md | deze chat (HA, Btechnics_Toegang) | APK chat |
+| naar-app.md | APK chat (Btechnics Deur) | deze chat |
+
+Regels:
+1. Bij het begin van elke beurt eerst `naar-ha.md` lezen.
+2. Afgehandeld bericht: verplaatsen naar `archief/` met datum en uur in de naam (bv. `archief/2026-10-17_1630_naar-ha.md`).
+3. Iets voor de app: onderaan `naar-app.md` een blok toevoegen met kop (datum, uur, afzender HA, versie), daarna vraag of antwoord
+   met verwijzing naar het punt in het afsprakendocument.
+4. Nooit een bericht van de andere chat wijzigen of wissen.
+5. Formaten staan enkel in het afsprakendocument en in de map `contract/` van deze repo. De postbus is voor vragen en meldingen.
+6. Typt Matthias "postbus": postbus lezen, afwerken, antwoord voor de app in `naar-app.md`, kort melden wat er gebeurd is (versie, testresultaat).
+
+## Werkwijze
+
+- Releases: commit in de container, bundle naar `~/BtxBuild` op de Mac, `git pull --ff-only <bundle> HEAD` in
+  `~/Documents/Claude/Projects/Btechnics_Toegang`, push, `gh release create vX.Y.Z --target main`, daarna
+  `node toegang-ha.mjs download vX.Y.Z` in `~/BtxBuild` en HA herstarten via REST. Altijd een nieuwe bundelnaam (iCloud cache).
+- Na elke uitrol het scherm zelf nakijken (headless Chrome op de Mac, schermafdrukken), niet enkel tests.
+- Nooit testen op de koppeling van de echte tablet (Deur verdiep, t_85ba78). Gebruik de testdeur via de diensten testdeur_klaarzetten en testdeur_opruimen ("Testdeur (tests)") en een
+  testtablet met eigen sleutel; ruim testpersonen op.
+- Akuvox S532 (192.168.1.153): enkel eigen gebruikers vanaf UserID 700001, nooit SmartPlus of bestaande gebruikers aanpassen.
+- Wijzigingen aan de Work app of Btechnics IOT nooit zelf doen: prompt geven voor die chat (zie `claude/afspraak-work-toegang.md`
+  in het claude.ai project).
+
+## Werkpunten (stand 17/10/2026)
+
+Uit de postbus van 13/10 (naar-ha.md): Akuvox sync, pulsduur per deur, gezicht ontbreekt per tablet en portaallink via Work,
+afsprakendocument v0.5 als enige bron, map contract, vaste testdeur, dashboard per tablet, https poort met eigen certificaat,
+reden vermoedelijke_foto, backups nakijken, beheerders tonen en loggen wie een code bekijkt of deelt.

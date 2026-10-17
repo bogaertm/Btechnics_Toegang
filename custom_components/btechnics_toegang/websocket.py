@@ -10,10 +10,11 @@ import voluptuous as vol
 from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.network import NoURLAvailableError, get_url
 from homeassistant.util import dt as dt_util
 
-from .const import API, ARCHIEF_DAGEN, DOMAIN, OFFLINE_NA, USER_MAX_ACTIVE, USER_MAX_AHEAD_DAYS, USER_MAX_DAYS
+from .const import SIGNAL_UPDATE, API, ARCHIEF_DAGEN, DOMAIN, OFFLINE_NA, USER_MAX_ACTIVE, USER_MAX_AHEAD_DAYS, USER_MAX_DAYS
 from .register import Register, ToegangFout, tijdstip
 
 
@@ -48,7 +49,7 @@ def portaal_url(hass, token: str) -> str:
 @callback
 def async_registreer_ws(hass: HomeAssistant) -> None:
     for cmd in (ws_doors, ws_history, ws_manage_list, ws_manage_action, ws_user_codes, ws_user_add, ws_user_stop,
-                ws_user_days, ws_errors, ws_data, ws_uitnodiging, ws_portaal_link):
+                ws_user_days, ws_errors, ws_data, ws_uitnodiging, ws_portaal_link, ws_bekeken, ws_beheerders):
         websocket_api.async_register_command(hass, cmd)
 
 
@@ -397,10 +398,17 @@ def ws_data(hass, connection, msg):
     d = reg.data
     tablets = [{"id": t["id"], "naam": t["naam"], "deur_id": t["deur_id"], "app_versie": t.get("app_versie"),
                 "gekoppeld": t.get("gekoppeld"), "laatst": t.get("laatst"), "online": reg.tablet_online(t, OFFLINE_NA),
-                "status": t.get("status") or {}, "gezicht_sleutel": bool(t.get("pubkey"))} for t in d["tablets"].values()]
+                "status": t.get("status") or {}, "gezicht_sleutel": bool(t.get("pubkey")), "kanaal": t.get("kanaal"),
+                "laatste_lijst_ha": t.get("laatste_lijst_ha"), "gezichten_verwacht": reg.gezichten_verwacht(t)} for t in d["tablets"].values()]
     deuren = sorted(d["deuren"].values(), key=lambda x: x["naam"].lower())
     gebeurtenissen = list(reversed(d["gebeurtenissen"][-max(1, min(msg["log"], 500)):]))
-    connection.send_result(msg["id"], {"deuren": deuren, "tablets": tablets, "log": gebeurtenissen, "versie": d["versie"],
+    from .api import https_info
+    from .tls import kort
+    h = hass.data[DOMAIN].get("https")
+    https = {**(https_info(hass) or {}), "kort": kort(h.vingerafdruk) if h else "", "fout": h.fout if h else "uit"}
+    ak = hass.data[DOMAIN].get("akuvox")
+    akuvox = {**ak.status, "deur_id": ak.deur_id, "ip": ak.ip} if ak and ak.ip else None
+    connection.send_result(msg["id"], {"deuren": deuren, "tablets": tablets, "log": gebeurtenissen, "versie": d["versie"], "akuvox": akuvox, "https": https,
                                        "personen": [{"id": p["id"], "naam": p["naam"], "deuren": p["deuren"], "status": p["status"]}
                                                     for p in d["personen"].values()]})
 
@@ -445,3 +453,46 @@ def ws_portaal_link(hass, connection, msg):
         connection.send_error(msg["id"], "failed", str(e))
         return
     connection.send_result(msg["id"], {"ok": True, "url": portaal_url(hass, token)})
+
+
+# ---------------------------------------------------------------- wie bekijkt of deelt codes, wie is beheerder
+
+_BEKEKEN: dict[tuple, float] = {}
+
+
+@websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/bekeken", vol.Required("actie"): vol.In(["bekeken", "alle", "gedeeld"]),
+                                  vol.Optional("entry"): str})
+@callback
+def ws_bekeken(hass, connection, msg):
+    """Logt in de wijzigingen wie een code bekeek of deelde (hoogstens een keer per 5 minuten per persoon en actie)."""
+    import time as _time
+    reg, wie, actie = _reg(hass), _wie(connection), msg["actie"]
+    p = reg.data["personen"].get(msg.get("entry") or "")
+    if actie != "alle" and not p:
+        connection.send_error(msg["id"], "not_found", "onbekende persoon")
+        return
+    if p and not _admin(connection) and p.get("owner") != (connection.user.id if connection.user else None):
+        connection.send_error(msg["id"], "unauthorized", "enkel je eigen codes")
+        return
+    sleutel = (connection.user.id if connection.user else "", actie, p["id"] if p else "")
+    nu = _time.monotonic()
+    if nu - _BEKEKEN.get(sleutel, -1e9) > 300:
+        _BEKEKEN[sleutel] = nu
+        if actie == "alle":
+            reg.audit(wie, "alle codes bekeken", "alle codes", soort="code")
+        else:
+            reg.audit(wie, "code gedeeld" if actie == "gedeeld" else "code bekeken", p["naam"], p["deuren"])
+        reg._bewaar()  # noqa: SLF001
+        async_dispatcher_send(hass, SIGNAL_UPDATE)
+    connection.send_result(msg["id"], {"ok": True})
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/beheerders"})
+@websocket_api.async_response
+async def ws_beheerders(hass, connection, msg):
+    gebruikers = await hass.auth.async_get_users()
+    uit = [{"naam": u.name, "actief": u.is_active, "eigenaar": u.is_owner,
+            "gebruikersnaam": next((c.data.get("username") for c in u.credentials if c.data), None)}
+           for u in gebruikers if u.is_admin and not u.system_generated]
+    connection.send_result(msg["id"], {"beheerders": sorted(uit, key=lambda x: (not x["actief"], (x["naam"] or "").lower()))})

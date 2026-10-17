@@ -1,0 +1,18 @@
+{
+  "_uitleg": "POST /open; de tablet logt zelf (log ontbreekt of true). Met log:false logt HA. 200 geopend, 403 geweigerd met reden onbekend, buiten_schema of verlopen, 502 fout bij het relais.",
+  "verzoek": {
+    "methode": "pin",
+    "persoon_id": "p_780f61"
+  },
+  "antwoord_200": {
+    "geopend": true
+  },
+  "verzoek_onbekend": {
+    "methode": "pin",
+    "persoon_id": null
+  },
+  "antwoord_403": {
+    "geopend": false,
+    "reden": "onbekend"
+  }
+}

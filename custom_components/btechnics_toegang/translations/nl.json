@@ -66,6 +66,10 @@
         "open_entiteit": {
           "name": "Openen met",
           "description": ""
+        },
+        "puls_s": {
+          "name": "Pulsduur",
+          "description": "Seconden waarna een schakelaar of input_boolean weer uit gaat (0 = niet)."
         }
       }
     },
@@ -351,6 +355,46 @@
           "description": "Wie in Work de opdracht gaf."
         }
       }
+    },
+    "akuvox_test": {
+      "name": "Akuvox nakijken",
+      "description": "Leest wat er op de S532 staat, zonder iets te wijzigen.",
+      "fields": {}
+    },
+    "akuvox_sync": {
+      "name": "Akuvox nu syncen",
+      "description": "Zet de eigen gebruikers nu op de S532 (enkel UserID vanaf 700001).",
+      "fields": {}
+    },
+    "testdeur_klaarzetten": {
+      "name": "Testdeur klaarzetten",
+      "description": "Vaste testdeur met testpersoon en een nieuwe koppelcode, enkel voor tests.",
+      "fields": {}
+    },
+    "testdeur_opruimen": {
+      "name": "Testdeur opruimen",
+      "description": "Ontkoppelt de testtablets en wist de testpersonen.",
+      "fields": {}
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Instellingen",
+        "description": "Sync naar de Akuvox S532 via de lokale HTTP API (zet ze aan op het toestel: Instellingen, HTTP API, Basic). Enkel eigen gebruikers vanaf UserID 700001; gebruikers van SmartPlus blijven onaangeroerd. Wachtwoord: {wachtwoord} (leeg laten is ongewijzigd).",
+        "data": {
+          "akuvox_aan": "Sync aan",
+          "akuvox_ip": "IP adres",
+          "akuvox_gebruiker": "Gebruiker HTTP API",
+          "akuvox_wachtwoord": "Wachtwoord HTTP API",
+          "akuvox_deur": "Deur van de S532 in HA",
+          "https_poort": "Https poort voor de tablets",
+          "enkel_https": "Enkel https voor tablets (na de overgang)"
+        }
+      }
+    },
+    "error": {
+      "akuvox": "Geen verbinding met de Akuvox: {fout}"
     }
   }
 }

@@ -1,0 +1,20 @@
+{
+  "_uitleg": "sha256(zout + 'zout:waarde'), daarna 1999 keer sha256(zout + vorige digest), lowercase hex",
+  "vectoren": [
+    {
+      "zout": "test",
+      "waarde": "1234",
+      "hash": "78ddd1e09efdd4c9c9b044ffee6ea076b05e95441fc2ead652e0c46809e31824"
+    },
+    {
+      "zout": "a1b2c3d4e5f6a7b8c9d0e1f2",
+      "waarde": "740163",
+      "hash": "4e627b2606cc57911b30c10910ffd5978721ef29bd00f2f9c9e4ac6b29cfaade"
+    },
+    {
+      "zout": "a1b2c3d4e5f6a7b8c9d0e1f2",
+      "waarde": "04A1B2C3",
+      "hash": "9f4b9f311c629b69d761936f726df686a81189a34c46554feca0b4b9ad74e2c2"
+    }
+  ]
+}

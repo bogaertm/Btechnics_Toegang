@@ -240,6 +240,9 @@ class BtxToegang extends HTMLElement {
     if (!force && (this._busy || this._form)) return;
     try {
       this._data = await this._ws({ type: `${D}/data`, log: 200 });
+      if (!this._beheerders || Date.now() - this._beheerdersT > 300000) {
+        try { this._beheerders = (await this._ws({ type: `${D}/beheerders` })).beheerders; this._beheerdersT = Date.now(); } catch (e) { this._beheerders = null; }
+      }
       this._render();
     } catch (e) {
       const o = this.$("out");
@@ -313,18 +316,26 @@ class BtxToegang extends HTMLElement {
           <button class="btn" data-a="deur" data-id="${d.id}"><ha-icon icon="mdi:pencil"></ha-icon> Aanpassen</button></span></div>
         <div class="seg">${MODI.map(([m, l, i]) => `<button class="${d.modus === m ? "on" : ""}" data-a="modus" data-id="${d.id}" data-m="${m}"><ha-icon icon="${i}"></ha-icon>${l}</button>`).join("")}</div>
         <div class="hint" style="margin-top:6px">Modus sinds ${esc(d.modus_sinds ? f.dateTime(new Date(d.modus_sinds)) : "?")}, gezet door ${d.modus_door === "ha" ? "Home Assistant" : esc((tablets.find((t) => t.id === d.modus_door) || {}).naam || "de tablet")}.
-          Opent met: ${d.open_entiteit ? `<b>${esc(this._entNaam(d.open_entiteit))}</b>` : `<span class="error">nog niets gekozen</span>`}</div>
+          Opent met: ${d.open_entiteit ? `<b>${esc(this._entNaam(d.open_entiteit))}</b>${/^(switch|input_boolean|light)\./.test(d.open_entiteit) ? (d.puls_s ? `, gaat na ${d.puls_s} s weer uit` : ", blijft aan (pulsduur 0)") : ""}` : `<span class="error">nog niets gekozen</span>`}</div>
+        ${(() => { const a = this._data.akuvox; if (!a || a.deur_id !== d.id) return "";
+          const st = !a.aan ? "sync staat uit" : a.ok === null ? "nog niet gesynct" : a.ok ? "sync in orde" : `fout: ${esc(a.fout || "?")}`;
+          return `<div class="sub">Akuvox S532 (${esc(a.ip)})</div><div class="hint"><span class="dot ${a.ok ? "on" : "off"}"></span> ${st}${a.aan ? ` · ${a.eigen} personen van HA op het toestel, ${a.toestel} gebruikers in totaal${a.vreemd_boven_start ? `, ${a.vreemd_boven_start} onbekende vanaf 700001 (blijven staan)` : ""}${a.laatst ? `, laatst ${esc(f.compact(new Date(a.laatst)))}` : ""}` : ""}</div>`; })()}
         <div class="sub">Tablets</div>
         ${tb.length ? tb.map((t) => `<div class="tab"><span class="dot ${t.online ? "on" : "off"}" title="${t.online ? "Online" : "Offline"}"></span>
-            <span class="mt"><b>${esc(t.naam)}</b><div class="hint">${t.online ? "Online" : "Offline"}${t.laatst ? `, laatst gezien ${esc(f.compact(new Date(t.laatst)))}` : ""}${t.app_versie ? ` · app ${esc(t.app_versie)}` : ""}${t.gezicht_sleutel ? " · gezichtsherkenning klaar" : " · nog geen sleutel voor gezichtsherkenning"}${t.status && t.status.log_wachtrij ? ` · ${t.status.log_wachtrij} logregels in wachtrij` : ""}</div></span>
+            <span class="mt"><b>${esc(t.naam)}</b><div class="hint">${t.online ? "Online" : "Offline"}${t.laatst ? `, laatst gezien ${esc(f.compact(new Date(t.laatst)))}` : ""}${t.app_versie ? ` · app ${esc(t.app_versie)}` : ""}${t.status && t.status.schema ? ` · schema ${esc(String(t.status.schema))}` : ""}${t.status && t.status.log_wachtrij ? ` · ${t.status.log_wachtrij} logregels in wachtrij` : ""}</div>
+              <div class="hint">${t.kanaal === "https" ? "Https" : t.kanaal === "http" ? `<span class="error">Nog via http</span>` : "Verbinding nog onbekend"}${t.laatste_lijst_ha ? ` · lijst opgehaald ${esc(f.compact(new Date(t.laatste_lijst_ha)))}` : ""}${t.status && t.status.laatste_lijst ? ` · geldige lijst op de tablet ${esc(f.compact(new Date(t.status.laatste_lijst)))}` : ""}</div>
+              <div class="hint">${!t.gezicht_sleutel ? "Gezichten: nog geen sleutel" : t.status && typeof t.status.gezichten === "number" ? (t.status.gezichten === t.gezichten_verwacht ? `Gezichten in orde (${t.gezichten_verwacht})` : `<span class="error">Gezichten: ${t.status.gezichten} op de tablet, ${t.gezichten_verwacht} verwacht</span>`) : `Gezichten: ${t.gezichten_verwacht} verwacht`}${t.status && typeof t.status.personen === "number" ? ` · ${t.status.personen} personen op de tablet` : ""}</div></span>
             <span class="acts"><button class="btn danger" data-a="intrekken" data-id="${t.id}"><ha-icon icon="mdi:link-off"></ha-icon> Ontkoppelen</button></span></div>`).join("")
           : `<div class="hint">Nog geen tablet gekoppeld.</div>`}
         ${(() => { const meld = (this._data.log || []).filter((r) => r.deur_id === d.id).slice(0, 5);
           return meld.length ? `<div class="sub">Laatste meldingen van de tablet</div>${meld.map((r) => `<div class="hint">${esc(f.compact(new Date(r.tijd)))} · ${esc(SOORT[r.soort] || r.soort)}: ${esc(r.tekst || "")}</div>`).join("")}` : ""; })()}
-        ${c ? `<div class="bigcode"><span class="mono">${esc(c.code)}</span><small>Koppelcode voor ${esc(d.naam)}. Geef ze in op de tablet onder Beheer, Koppelen.<br>Nog ${Math.floor(rest / 60)}:${String(rest % 60).padStart(2, "0")} geldig, één keer bruikbaar.</small></div>`
+        ${c ? `<div class="bigcode"><span class="mono">${esc(c.code)}</span><small>Koppelcode voor ${esc(d.naam)}. Geef ze in op de tablet onder Beheer, Koppelen.<br>${this._data.https && this._data.https.kort ? `Vingerafdruk https: <b class="mono">${esc(this._data.https.kort)}</b> (moet gelijk zijn aan wat de tablet toont)<br>` : ""}Nog ${Math.floor(rest / 60)}:${String(rest % 60).padStart(2, "0")} geldig, één keer bruikbaar.</small></div>`
           : `<div style="margin-top:10px"><button class="btn" data-a="koppel" data-id="${d.id}"><ha-icon icon="mdi:tablet"></ha-icon> Tablet koppelen</button></div>`}
       </div>`;
-    }).join("");
+    }).join("") + (this._beheerders ? `<div class="deur"><div class="kop"><b>Beheerders</b></div>
+      <div class="hint">Deze gebruikers van Home Assistant zien alle codes en kunnen ze delen. Elke keer dat iemand een code bekijkt of deelt, staat in de Wijzigingen bij Codes.</div>
+      ${this._beheerders.map((b) => `<div class="tab"><span class="dot ${b.actief ? "on" : "off"}"></span><span class="mt"><b>${esc(b.naam || "?")}</b><div class="hint">${b.gebruikersnaam ? esc(b.gebruikersnaam) : "geen login met wachtwoord"}${b.eigenaar ? " · eigenaar" : ""}${b.actief ? "" : " · uitgeschakeld"}</div></span></div>`).join("")}
+      <div class="hint">Beheerders beheer je in Home Assistant onder Instellingen, Personen, Gebruikers.</div></div>` : "");
   }
   _deurForm(d) {
     this._form = { type: "deur", id: d && d.id };
@@ -336,6 +347,8 @@ class BtxToegang extends HTMLElement {
       <div class="row"><select id="fent" style="min-width:260px;max-width:100%"><option value="">Nog niet kiezen</option>
         ${huidig && !ents.find((x) => x.id === huidig) ? `<option value="${esc(huidig)}" selected>${esc(huidig)} (bestaat niet meer)</option>` : ""}
         ${ents.map((x) => `<option value="${esc(x.id)}" ${x.id === huidig ? "selected" : ""}>${esc(x.naam)} (${esc(x.id)})</option>`).join("")}</select></div>
+      <div class="lbl">Pulsduur: een schakelaar of input_boolean gaat na zoveel seconden vanzelf weer uit (0 is niet terugzetten)</div>
+      <div class="row"><input id="fpuls" type="number" min="0" max="60" step="1" value="${d && d.puls_s !== undefined ? d.puls_s : 5}" style="width:110px"> seconden</div>
       <div class="row"><button class="btn primary" id="fbewaar">${d ? "Bewaren" : "Deur toevoegen"}</button><button class="btn" id="fannuleer">Annuleren</button>
         ${d ? `<span style="flex:1"></span><button class="btn danger" id="fweg"><ha-icon icon="mdi:delete"></ha-icon> Deur verwijderen</button>` : ""}</div>`);
     p.querySelector("#fannuleer").addEventListener("click", () => this._sluit());
@@ -343,8 +356,12 @@ class BtxToegang extends HTMLElement {
       const naam = p.querySelector("#fnaam").value.trim(), ent = p.querySelector("#fent").value;
       if (!naam) return this._bericht("Geef de deur een naam.");
       this._doe(async () => {
-        if (d) await this._dienst("deur_wijzigen", { deur: d.id, naam, open_entiteit: ent }, true);
-        else await this._dienst("deur_toevoegen", ent ? { naam, open_entiteit: ent } : { naam }, true);
+        if (d) await this._dienst("deur_wijzigen", { deur: d.id, naam, open_entiteit: ent, puls_s: puls }, true);
+        else {
+          const r = await this._dienst("deur_toevoegen", ent ? { naam, open_entiteit: ent } : { naam }, true);
+          const nid = r && r.deur && r.deur.id;
+          if (nid && puls !== 5) await this._dienst("deur_wijzigen", { deur: nid, puls_s: puls }, true);
+        }
         this._sluit();
       }, d ? `Deur ${naam} bewaard.` : `Deur ${naam} toegevoegd. Koppel nu een tablet.`);
     });

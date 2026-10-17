@@ -1,0 +1,23 @@
+{
+  "_uitleg": "POST /koppel zonder sleutel. https is null als de https poort niet draait.",
+  "verzoek": {
+    "code": "123456",
+    "toestel_id": "contract-test",
+    "naam": "Testtablet",
+    "app_versie": "1.64",
+    "pubkey": "<SPKI DER base64>"
+  },
+  "antwoord": {
+    "tablet_id": "t_a3798b",
+    "deur_id": "d_965cd8",
+    "sleutel": "YnoOFkNU0XvgGQxz5mh5T83aXiqQTJ9bmZM6c34dWBI",
+    "pubkey_id": "19cee8eea832e61bcc8ff934775676727b53b2173da059af2abf57c00ae9a4fd",
+    "https": {
+      "poort": 8443,
+      "sha256": "536129ffd6ea2b0f70f1287c4c96f4ad39a434fd319b25f316ad908de7b15d09"
+    }
+  },
+  "fout_antwoord": {
+    "fout": "Koppelcode ongeldig of vervallen"
+  }
+}
