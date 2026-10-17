@@ -1,0 +1,63 @@
+{
+  "_uitleg": "POST /log {items}; antwoord ontvangen = uids die HA kreeg (ook dubbele). Toegang en geweigerd gaan naar de historiek, de rest naar de tabletmeldingen.",
+  "verzoek": {
+    "items": [
+      {
+        "uid": "c1",
+        "tijd": "2026-10-17T16:30:00+02:00",
+        "soort": "toegang",
+        "methode": "pin",
+        "persoon_id": "p_780f61",
+        "tekst": "met code"
+      },
+      {
+        "uid": "c2",
+        "tijd": "2026-10-17T16:30:00+02:00",
+        "soort": "geweigerd",
+        "methode": "pin",
+        "reden": "onbekend",
+        "persoon_id": null
+      },
+      {
+        "uid": "c3",
+        "tijd": "2026-10-17T16:30:00+02:00",
+        "soort": "geweigerd",
+        "methode": "gezicht",
+        "reden": "vermoedelijke_foto",
+        "persoon_id": "p_7e6c6c",
+        "score": 0.12
+      },
+      {
+        "uid": "c4",
+        "tijd": "2026-10-17T16:30:00+02:00",
+        "soort": "systeem",
+        "tekst": "app gestart"
+      }
+    ]
+  },
+  "antwoord": {
+    "ontvangen": [
+      "c1",
+      "c2",
+      "c3",
+      "c4"
+    ]
+  },
+  "historiek": [
+    {
+      "naam": "Foute code",
+      "manier": "code",
+      "geopend": false
+    },
+    {
+      "naam": "Gezicht Test",
+      "manier": "gezicht (vermoedelijke foto)",
+      "geopend": false
+    },
+    {
+      "naam": "Testpersoon (tests)",
+      "manier": "code",
+      "geopend": true
+    }
+  ]
+}

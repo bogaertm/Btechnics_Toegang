@@ -15,7 +15,7 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
-from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.helpers.event import async_call_later, async_track_time_interval
 from homeassistant.helpers.service import async_register_admin_service
 from homeassistant.helpers.typing import ConfigType
 
@@ -92,7 +92,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     async def deur_wijzigen(call: ServiceCall) -> ServiceResponse:
         reg = reg_()
         d = reg.deur_wijzigen(reg.deur_op_naam(call.data["deur"])["id"], call.data.get("naam"),
-                              call.data.get("open_entiteit"), wie=await _wie(hass, call))
+                              call.data.get("open_entiteit"), wie=await _wie(hass, call), puls_s=call.data.get("puls_s"))
         _herlaad_entiteiten(hass)
         return {"deur": d}
 
@@ -217,6 +217,36 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
             _herlaad_entiteiten(hass)
         return res
 
+    @_veilig
+    async def testdeur_klaarzetten(call: ServiceCall) -> ServiceResponse:
+        from . import testset
+        nieuw = not any(d.get("test") for d in reg_().data["deuren"].values())
+        res = testset.klaarzetten(reg_())
+        if nieuw:
+            _herlaad_entiteiten(hass)
+        return res
+
+    @_veilig
+    async def testdeur_opruimen(call: ServiceCall) -> ServiceResponse:
+        from . import testset
+        return testset.opruimen(reg_())
+
+    async def akuvox_test(call: ServiceCall) -> ServiceResponse:
+        from .akuvox import AkuvoxFout
+        ak = _data(hass).get("akuvox")
+        if not ak or not ak.ip:
+            raise HomeAssistantError("Akuvox is niet ingesteld (Instellingen, Btechnics Toegang, Configureren)")
+        try:
+            return {"status": ak.status, "toestel": await ak.async_test()}
+        except AkuvoxFout as e:
+            raise HomeAssistantError(str(e)) from e
+
+    async def akuvox_sync(call: ServiceCall) -> ServiceResponse:
+        ak = _data(hass).get("akuvox")
+        if not ak or not ak.aan:
+            raise HomeAssistantError("Akuvox sync staat uit")
+        return {"verslag": await ak.async_sync(), "status": ak.status}
+
     def dienst(naam, fn, schema, antw=SupportsResponse.NONE):
         async_register_admin_service(hass, DOMAIN, naam, fn, schema, antw)
 
@@ -224,7 +254,9 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     dienst("deur_toevoegen", deur_toevoegen, vol.Schema({vol.Required("naam"): cv.string, vol.Optional("open_entiteit"): cv.entity_id}),
            SupportsResponse.OPTIONAL)
     dienst("deur_wijzigen", deur_wijzigen, vol.Schema({vol.Required("deur"): cv.string, vol.Optional("naam"): cv.string,
-                                                       vol.Optional("open_entiteit"): vol.Any("", cv.entity_id)}), SupportsResponse.OPTIONAL)
+                                                       vol.Optional("open_entiteit"): vol.Any("", cv.entity_id),
+                                                       vol.Optional("puls_s"): vol.All(vol.Coerce(int), vol.Range(min=0, max=60))}),
+           SupportsResponse.OPTIONAL)
     dienst("deur_verwijderen", deur_verwijderen, vol.Schema({vol.Required("deur"): cv.string}))
     dienst("deur_openen", deur_openen, vol.Schema({vol.Required("deur"): cv.string}))
     dienst("modus_zetten", modus_zetten, vol.Schema({vol.Required("deur"): cv.string, vol.Required("modus"): vol.In(MODI)}))
@@ -239,6 +271,10 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     for naam in ("deblokkeren", "uit_dienst", "herstellen", "verwijderen"):
         dienst(f"persoon_{naam}", _statusdienst(naam), persoon)
     dienst("overzicht", overzicht, vol.Schema({}), SupportsResponse.ONLY)
+    dienst("akuvox_test", akuvox_test, vol.Schema({}), SupportsResponse.ONLY)
+    dienst("testdeur_klaarzetten", testdeur_klaarzetten, vol.Schema({}), SupportsResponse.ONLY)
+    dienst("testdeur_opruimen", testdeur_opruimen, vol.Schema({}), SupportsResponse.ONLY)
+    dienst("akuvox_sync", akuvox_sync, vol.Schema({}), SupportsResponse.ONLY)
     # koppeling met Btechnics Work via Btechnics IOT (zie werk.py)
     dienst("werk", werk, vol.Schema({vol.Required("actie"): cv.string, vol.Optional("velden"): dict,
                                      vol.Optional("door"): cv.string}), SupportsResponse.ONLY)
@@ -279,9 +315,57 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         registreer_views(hass)
         registreer_portaal(hass)
         data["views"] = True
+    # eigen https poort voor de tablets (zelf gemaakt certificaat); blijft draaien over herladen heen
+    from .api import TABLET_VIEWS
+    from .tls import POORT_STANDAARD, HttpsPoort
+    poort = int(entry.options.get("https_poort") or POORT_STANDAARD)
+    h = data.get("https")
+    if h and h.poort != poort:
+        await h.async_stop()
+        h = None
+    if h is None and poort:
+        h = data["https"] = HttpsPoort(hass, poort)
+        await h.async_start([v() for v in TABLET_VIEWS])
+
+        async def _stop(_e, h=h):
+            await h.async_stop()
+        hass.bus.async_listen_once("homeassistant_stop", _stop)
     data["entry"] = entry
     reg, tg = data["register"], data["toegang"]
     reg.bij_nieuwe_tablet = lambda: hass.config_entries.async_schedule_reload(entry.entry_id)
+    from .akuvox import Akuvox, AkuvoxFout
+    ak = data["akuvox"] = Akuvox(hass, reg, dict(entry.options))
+    entry.async_on_unload(entry.add_update_listener(_opties_gewijzigd))
+
+    async def _akuvox(_now=None):
+        if not ak.aan:
+            return
+        await ak.async_sync()
+        try:
+            rijen = await ak.async_deurlog()
+        except AkuvoxFout as e:
+            _LOGGER.debug("Akuvox deurlog: %s", e)
+            return
+        if rijen:
+            nieuw = await hass.async_add_executor_job(tg.archief.toevoegen, rijen)
+            if nieuw:
+                await tg._na_toevoegen(ak.deur_id, [(r, {"deur_id": r["door_id"], "deur": r["door"], "methode": r["method"],
+                                                         "persoon_id": r["persoon_id"] or None, "soort": "toegang" if r["opened"] else "geweigerd",
+                                                         "tekst": r["tekst"], "uid": r["uid"]}) for r in rijen[-nieuw:]])
+
+    uitgesteld = {"h": None}
+
+    def _na_wijziging():
+        if not ak.aan:
+            return
+        if uitgesteld["h"]:
+            uitgesteld["h"]()
+
+        async def _doe(_now):
+            uitgesteld["h"] = None
+            await ak.async_sync()
+        uitgesteld["h"] = async_call_later(hass, 3, _doe)
+    reg.bij_gewijzigd = _na_wijziging
 
     async def _planner(_now=None):
         try:
@@ -290,6 +374,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 _LOGGER.info("Planner: %s", "; ".join(gedaan))
         except Exception:  # noqa: BLE001
             _LOGGER.exception("Planner mislukt")
+        try:
+            await _akuvox()
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception("Akuvox sync mislukt")
 
     async def _opruimen(_now=None):
         n = await hass.async_add_executor_job(tg.archief.prune, ARCHIEF_DAGEN)
@@ -302,6 +390,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.async_create_task(_opruimen())
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
+
+
+async def _opties_gewijzigd(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    await hass.config_entries.async_reload(entry.entry_id)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

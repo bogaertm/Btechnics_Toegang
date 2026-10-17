@@ -66,6 +66,10 @@
         "open_entiteit": {
           "name": "Openen met",
           "description": ""
+        },
+        "puls_s": {
+          "name": "Pulse duration",
+          "description": "Seconds after which a switch or input_boolean is turned off again (0 = never)."
         }
       }
     },
@@ -351,6 +355,46 @@
           "description": "Who gave the command in Work."
         }
       }
+    },
+    "akuvox_test": {
+      "name": "Check Akuvox",
+      "description": "Reads the S532 without changing anything.",
+      "fields": {}
+    },
+    "akuvox_sync": {
+      "name": "Sync Akuvox now",
+      "description": "Syncs own users to the S532 now (UserID 700001 and up only).",
+      "fields": {}
+    },
+    "testdeur_klaarzetten": {
+      "name": "Prepare test door",
+      "description": "Fixed test door with a test person and a new pairing code, for tests only.",
+      "fields": {}
+    },
+    "testdeur_opruimen": {
+      "name": "Clean test door",
+      "description": "Unpairs test tablets and removes test persons.",
+      "fields": {}
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Settings",
+        "description": "Sync to the Akuvox S532 via its local HTTP API. Only own users from UserID 700001; SmartPlus users are never touched. Password: {wachtwoord} (leave empty to keep).",
+        "data": {
+          "akuvox_aan": "Sync on",
+          "akuvox_ip": "IP address",
+          "akuvox_gebruiker": "HTTP API user",
+          "akuvox_wachtwoord": "HTTP API password",
+          "akuvox_deur": "Door of the S532 in HA",
+          "https_poort": "HTTPS port for tablets",
+          "enkel_https": "HTTPS only for tablets"
+        }
+      }
+    },
+    "error": {
+      "akuvox": "Cannot reach the Akuvox: {fout}"
     }
   }
 }

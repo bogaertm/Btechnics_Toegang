@@ -1392,7 +1392,7 @@ class VtoCodes extends VtoBase {
       if (rv) {
         // klik op een code: enkel die code tonen of weer verbergen
         const id = rv.dataset.reveal;
-        if (this._revealed.has(id)) this._revealed.delete(id); else this._revealed.add(id);
+        if (this._revealed.has(id)) this._revealed.delete(id); else { this._revealed.add(id); this._logBekeken("bekeken", id); }
         if (this._form && this._form.type === "sheet") this._entrySheet(this._form.entry);
         return this._render();
       }
@@ -1448,8 +1448,13 @@ class VtoCodes extends VtoBase {
     const it = takeIntent(this._config.view || "codes");
     if (it && it.quick) { this._closeForm(); this._closeHistory(); this._openQuick(); }
   }
+  _logBekeken(actie, id) {
+    // wie een code bekijkt of deelt, komt in de wijzigingen (HA logt hoogstens een keer per 5 minuten)
+    this._ws({ type: "btechnics_toegang/bekeken", actie, ...(id ? { entry: id } : {}) }).catch(() => {});
+  }
   _toggleShow() {
     this._show = !this._show;
+    if (this._show) this._logBekeken("alle");
     this._revealed.clear();
     this.shadowRoot.getElementById("toggle").innerHTML = `<ha-icon icon="${this._show ? "mdi:eye-off" : "mdi:eye"}" style="--mdc-icon-size:18px"></ha-icon> ${this._show ? "Codes verbergen" : "Codes tonen"}`;
     this._render();
@@ -1850,6 +1855,7 @@ class VtoCodes extends VtoBase {
     return t;
   }
   _openShare(e, note) {
+    if (e && e.id) this._logBekeken("gedeeld", e.id);
     const p = this.shadowRoot.getElementById("panel");
     this._message("");
     this._form = { type: "share", entry: e };
@@ -2371,7 +2377,7 @@ class VtoHandleiding extends VtoBase {
 // exist"). Daarom registreren we opnieuw zolang het nodig is, telkens via window.customElements
 // (het register dat NU actief is) en met een nieuwe subklasse (een constructor mag maar een keer).
 const CARD_CLASSES = [["btechnics-toegang-overzicht", VtoOverzicht], ["btechnics-toegang-historiek", VtoToegang], ["btechnics-toegang-codes", VtoCodes], ["btechnics-toegang-handleiding", VtoHandleiding]];
-const CARDS_VERSION = "0.5.2";
+const CARDS_VERSION = "0.7.0";
 const define = (name, cls) => {
   if (window.customElements.get(name)) return;
   try {

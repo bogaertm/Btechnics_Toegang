@@ -36,6 +36,13 @@ deur_wijzigen:
           - button
           - input_button
           - input_boolean
+    puls_s:
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 60
+          unit_of_measurement: s
 deur_verwijderen:
   fields:
     deur:
@@ -206,6 +213,10 @@ persoon_verwijderen:
       selector:
         text: {}
 overzicht: {}
+akuvox_test: {}
+testdeur_klaarzetten: {}
+testdeur_opruimen: {}
+akuvox_sync: {}
 werk:
   fields:
     actie:

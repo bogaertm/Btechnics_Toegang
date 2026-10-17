@@ -40,6 +40,7 @@ async def koppel(hass, client, deur="Vergaderzaal"):
 async def test_volledige_flow(opgezet):
     hass, client = opgezet
     calls = async_mock_service(hass, "switch", "turn_on")
+    uit = async_mock_service(hass, "switch", "turn_off")
     await dienst(hass, "deur_toevoegen", naam="Vergaderzaal", open_entiteit="switch.relais_vergaderzaal")
     await hass.async_block_till_done()
     jan = (await dienst(hass, "persoon_toevoegen", naam="Jan Peeters", pincode="4711", deuren=["Vergaderzaal"]))["persoon"]
@@ -109,10 +110,27 @@ async def test_volledige_flow(opgezet):
     rij = await hass.async_add_executor_job(arch.recent, antw["deur_id"], 10)
     assert len(rij) == 2 and {r["name"] for r in rij} == {"Jan Peeters", "Foute code"}
 
+    # echtheidscontrole: vermoedelijke foto komt als weigering in de historiek, met melding
+    foto = {"uid": "u3", "tijd": "2026-10-11T17:08:00+02:00", "soort": "geweigerd", "methode": "gezicht",
+            "reden": "vermoedelijke_foto", "persoon_id": jan["id"], "score": 0.123456}
+    await client.post(f"{API}/log", headers=kop, json={"items": [foto]})
+    await hass.async_block_till_done()
+    rij = [r for r in await hass.async_add_executor_job(arch.recent, antw["deur_id"], 10) if r["method"] == "gezicht (vermoedelijke foto)"]
+    assert rij and not rij[0]["opened"]
+    assert any("vermoedelijke foto" in (n.get("title") or "") for n in hass.data["persistent_notification"].values())
+
     # openen: Jan mag, onbekende niet, Elders niet (geen recht op deze deur)
     r = await client.post(f"{API}/open", headers=kop, json={"methode": "pin", "persoon_id": jan["id"]})
     assert r.status == 200 and (await r.json())["geopend"] is True
     assert calls[-1].data["entity_id"] == "switch.relais_vergaderzaal"
+    # pulsduur (standaard 5 s): het relais gaat vanzelf weer uit
+    from datetime import timedelta
+    from homeassistant.util import dt as dt_util
+    from pytest_homeassistant_custom_component.common import async_fire_time_changed
+    assert not uit
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=6))
+    await hass.async_block_till_done()
+    assert len(uit) == 1 and uit[0].data["entity_id"] == "switch.relais_vergaderzaal"
     r = await client.post(f"{API}/open", headers=kop, json={"methode": "pin", "persoon_id": None})
     assert r.status == 403 and (await r.json())["reden"] == "onbekend"
     elders = [p for p in hass.data[DOMAIN]["register"].data["personen"].values() if p["naam"] == "Elders"][0]
@@ -122,7 +140,7 @@ async def test_volledige_flow(opgezet):
     assert r.status == 200
     assert len(calls) == 2
     # HA schrijft zelf geen dubbele regel bij /open (de tablet logt zelf)
-    assert len(await hass.async_add_executor_job(arch.recent, antw["deur_id"], 10)) == 2
+    assert len(await hass.async_add_executor_job(arch.recent, antw["deur_id"], 10)) == 3
 
     # status: tablet online
     r = await client.post(f"{API}/status", headers=kop, json={"app_versie": "1.60", "version_code": 54,

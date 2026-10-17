@@ -108,12 +108,13 @@ class Werk:
 
     def _medewerker(self, p: dict) -> dict:
         g = p.get("gezicht")
+        ontbreekt = [t["tablet"] for t in self.reg.gezicht_tablets(p) if not g or t["pubkey_id"] not in g["sleutels"]] if g else []
         return {"werk_id": p.get("werk_id"), "persoon_id": p["id"], "naam": p["naam"], "voornaam": p.get("voornaam", ""),
                 "achternaam": p.get("achternaam", ""), "status": p["status"], "until": p.get("until"),
                 "geldig_van": p.get("valid_from"), "geldig_tot": p.get("valid_until"), "deuren": p["deuren"],
                 "schema": p.get("schema") or [], "pincode": bool(p.get("pin")), "foto": bool(p.get("foto")),
                 "portaal": bool(p.get("portaal_hash")), "portaal_v": _portaal_v(p), "gezicht": bool(g),
-                "gezicht_sinds": g["sinds"] if g else None, "telefoon": p.get("telefoon", ""), "email": p.get("email", ""),
+                "gezicht_sinds": g["sinds"] if g else None, "gezicht_ontbreekt": ontbreekt, "telefoon": p.get("telefoon", ""), "email": p.get("email", ""),
                 "bron": p.get("bron")}
 
     # ------------------------------------------------------------------ acties
@@ -123,7 +124,7 @@ class Werk:
         deuren = []
         for deur in sorted(d["deuren"].values(), key=lambda x: x["naam"].lower()):
             tabs = [t for t in d["tablets"].values() if t["deur_id"] == deur["id"]]
-            deuren.append({"id": deur["id"], "naam": deur["naam"], "modus": deur["modus"], "modus_sinds": deur.get("modus_sinds"),
+            deuren.append({"id": deur["id"], "naam": deur["naam"], "modus": deur["modus"], "test": bool(deur.get("test")), "modus_sinds": deur.get("modus_sinds"),
                            "kan_openen": bool(deur.get("open_entiteit")),
                            "tablets": [{"id": t["id"], "naam": t["naam"], "online": self.reg.tablet_online(t, OFFLINE_NA),
                                         "app_versie": t.get("app_versie"), "laatst": t.get("laatst"),

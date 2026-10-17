@@ -8,10 +8,11 @@ from datetime import datetime
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_send
+from homeassistant.helpers.event import async_call_later
 from homeassistant.util import dt as dt_util
 
 from .archief import Archief
-from .const import EVENT_TOEGANG, LOG_METHODES, LOG_REDENEN, LOG_SOORTEN, SIGNAL_UPDATE
+from .const import DOMAIN, EVENT_TOEGANG, LOG_METHODES, LOG_REDENEN, LOG_SOORTEN, PULS_STANDAARD, SIGNAL_UPDATE
 from .register import Register, ToegangFout
 
 _LOGGER = logging.getLogger(__name__)
@@ -26,6 +27,7 @@ class Toegang:
     def __init__(self, hass: HomeAssistant, reg: Register, archief: Archief) -> None:
         self.hass, self.reg, self.archief = hass, reg, archief
         self.recent: dict[str, list[dict]] = {}
+        self._puls: dict[str, object] = {}
 
     async def async_start(self) -> None:
         for did in self.reg.data["deuren"]:
@@ -47,6 +49,8 @@ class Toegang:
         naam = p["naam"] if p else NAAM_ZONDER_PERSOON.get(methode, "Onbekende code")
         if methode == "ha" and r.get("wie"):
             label = f"op afstand door {r['wie']}"
+        elif r.get("reden") == "vermoedelijke_foto":
+            label = "gezicht (vermoedelijke foto)"
         else:
             label = METHODE_LABEL.get(methode, "onbekend")
         return {"uid": str(r.get("uid") or uuid.uuid4()), "door_id": deur_id, "door": deur, "ts": int(t.timestamp()),
@@ -69,6 +73,13 @@ class Toegang:
                 "persoon_id": r.get("persoon_id") or None, "tekst": str(r.get("tekst") or "")[:200],
                 "tablet_id": tablet["id"], "deur_id": tablet["deur_id"], "deur": deur.get("naam", ""),
             }
+            if isinstance(r.get("score"), (int, float)) and not isinstance(r.get("score"), bool):
+                regel["score"] = round(float(r["score"]), 3)
+            if regel["reden"] == "vermoedelijke_foto":
+                regel["soort"] = "geweigerd"
+                score = f", score {regel['score']}" if "score" in regel else ""
+                regel["tekst"] = f"vermoedelijke foto{score}" + (f": {regel['tekst']}" if regel["tekst"] else "")
+                self._melding_foto(tablet, deur, regel)
             ontvangen.append(uid)
             rij = self._archiefrij(regel, tablet["deur_id"], deur.get("naam", ""))
             if rij:
@@ -80,6 +91,19 @@ class Toegang:
             if nieuw:
                 await self._na_toevoegen(tablet["deur_id"], rijen)
         return ontvangen
+
+    def _melding_foto(self, tablet: dict, deur: dict, regel: dict) -> None:
+        """Echtheidscontrole van de tablet: iemand probeerde met een foto of scherm binnen te geraken."""
+        from homeassistant.components import persistent_notification
+        p = self.reg.data["personen"].get(regel.get("persoon_id") or "")
+        wie = p["naam"] if p else "een onbekend gezicht"
+        persistent_notification.async_create(
+            self.hass, f"Tablet **{tablet['naam']}** ({deur.get('naam', '')}) weigerde een gezicht dat op een foto of scherm leek: "
+            f"{wie}{', score ' + str(regel['score']) if 'score' in regel else ''}. Het gezicht van die persoon is 5 minuten "
+            "geblokkeerd op die tablet; de code blijft werken.",
+            title="Btechnics Toegang: vermoedelijke foto", notification_id=f"{DOMAIN}_foto_{regel['uid']}")
+        self.hass.bus.async_fire(f"{DOMAIN}_vermoedelijke_foto", {"tablet": tablet["naam"], "deur_id": tablet["deur_id"],
+                                                                  "persoon_id": regel.get("persoon_id"), "score": regel.get("score")})
 
     async def _na_toevoegen(self, deur_id: str, rijen: list[tuple[dict, dict]]) -> None:
         self.recent[deur_id] = await self.hass.async_add_executor_job(self.archief.recent, deur_id, RECENT)
@@ -106,6 +130,21 @@ class Toegang:
         dienst = {"script": ("script", "turn_on"), "lock": ("lock", "unlock"), "button": ("button", "press"),
                   "input_button": ("input_button", "press")}.get(domein, (domein, "turn_on"))
         await self.hass.services.async_call(*dienst, {"entity_id": ent}, blocking=True)
+        # schakelaar of input_boolean na de pulsduur zelf terug uitzetten (een relais mag niet aan blijven)
+        puls = deur.get("puls_s", PULS_STANDAARD)
+        if domein in ("switch", "input_boolean", "light") and puls:
+            oud = self._puls.pop(deur["id"], None)
+            if oud:
+                oud()
+
+            async def _uit(_now, ent=ent, domein=domein, deur_id=deur["id"]):
+                self._puls.pop(deur_id, None)
+                try:
+                    await self.hass.services.async_call(domein, "turn_off", {"entity_id": ent}, blocking=True)
+                except Exception:  # noqa: BLE001
+                    _LOGGER.warning("Deur %s: %s terug uitzetten mislukt", deur_id, ent, exc_info=True)
+
+            self._puls[deur["id"]] = async_call_later(self.hass, puls, _uit)
 
 
 def ts_lokaal(ts: int) -> datetime:

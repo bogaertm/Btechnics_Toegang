@@ -30,6 +30,19 @@ async def test_ws_data(opgezet, hass_ws_client):
     r = await ws.receive_json()
     e = r["result"]["entries"][0]
     assert e["secret"] == "4711" and e["schema"][0]["dagen"] == [1, 2] and e["status"] == "active"
+    # wie een code bekijkt of deelt, staat in de wijzigingen (een keer per 5 minuten)
+    for i, actie in enumerate(["bekeken", "bekeken", "gedeeld", "alle"]):
+        await ws.send_json({"id": 10 + i, "type": f"{DOMAIN}/bekeken", "actie": actie, **({"entry": e["id"]} if actie != "alle" else {})})
+        assert (await ws.receive_json())["success"]
+    acties = [a["action"] for a in hass.data[DOMAIN]["register"].data["audit"]]
+    assert acties.count("code bekeken") == 1 and acties.count("code gedeeld") == 1 and acties.count("alle codes bekeken") == 1
+    await ws.send_json({"id": 20, "type": f"{DOMAIN}/beheerders"})
+    r = await ws.receive_json()
+    assert r["success"] and any(b["actief"] for b in r["result"]["beheerders"])
+    # https en akuvox staan in de data
+    await ws.send_json({"id": 21, "type": f"{DOMAIN}/data"})
+    d = (await ws.receive_json())["result"]
+    assert "https" in d and d["akuvox"] is None
 
 
 async def test_diensten_enkel_beheerder(opgezet, hass_read_only_user):

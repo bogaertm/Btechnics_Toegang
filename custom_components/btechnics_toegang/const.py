@@ -29,7 +29,7 @@ USER_MAX_DAYS = 7
 USER_MAX_AHEAD_DAYS = 31
 LOG_SOORTEN = ["toegang", "fout", "geweigerd", "alarm", "systeem", "oproep"]
 LOG_METHODES = ["pin", "kaart", "gezicht", "ha", "knop"]
-LOG_REDENEN = ["onbekend", "buiten_schema", "verlopen"]
+LOG_REDENEN = ["onbekend", "buiten_schema", "verlopen", "vermoedelijke_foto"]
 
 EVENT_TOEGANG = f"{DOMAIN}_toegang"
 SIGNAL_UPDATE = f"{DOMAIN}_update"
@@ -59,3 +59,5 @@ GEZICHT_TOESTEMMING = (
     "Ik kan mijn toestemming op elk moment intrekken op deze pagina; dan wordt de afdruk gewist, ook op de tablets. "
     "Ga ik uit dienst, dan wordt de afdruk ook gewist. Verantwoordelijke: {verantwoordelijke}, {adres}, {email}."
 )
+
+PULS_STANDAARD = 5  # seconden: een schakelaar of input_boolean zet HA na het openen zelf terug uit (0 = niet)

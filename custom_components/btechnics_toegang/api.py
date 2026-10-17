@@ -31,15 +31,35 @@ def _fout(status: int, tekst: str) -> web.Response:
     return web.json_response({"fout": tekst}, status=status)
 
 
+def _enkel_https(hass: HomeAssistant, request: web.Request) -> None:
+    """Na de overgangsperiode (optie enkel_https) weigert HA tabletverkeer over gewoon http."""
+    entry = hass.data[DOMAIN].get("entry")
+    if entry and entry.options.get("enkel_https") and not request.secure:
+        raise web.HTTPForbidden(text='{"fout": "enkel https: gebruik poort %s"}' % entry.options.get("https_poort", 8443),
+                                content_type="application/json")
+
+
+def https_info(hass: HomeAssistant) -> dict | None:
+    h = hass.data[DOMAIN].get("https")
+    if not h or not h.vingerafdruk or h.fout:
+        return None
+    return {"poort": h.poort, "sha256": h.vingerafdruk}
+
+
 class _TabletView(HomeAssistantView):
     requires_auth = False
     cors_allowed = False
 
     def _tablet(self, request: web.Request) -> dict | None:
+        hass = request.app[KEY_HASS]
+        _enkel_https(hass, request)
         kop = request.headers.get("Authorization", "")
         if not kop.startswith("Bearer "):
             return None
-        return _reg(request.app[KEY_HASS]).tablet_voor_sleutel(kop[7:].strip())
+        t = _reg(hass).tablet_voor_sleutel(kop[7:].strip())
+        if t is not None:
+            t["kanaal"] = "https" if request.secure else "http"
+        return t
 
     async def _json(self, request: web.Request) -> dict:
         try:
@@ -55,6 +75,7 @@ class KoppelView(_TabletView):
 
     async def post(self, request: web.Request) -> web.Response:
         hass = request.app[KEY_HASS]
+        _enkel_https(hass, request)
         data = await self._json(request)
         try:
             antw = _reg(hass).koppelen(
@@ -65,6 +86,11 @@ class KoppelView(_TabletView):
             _LOGGER.warning("Koppelen geweigerd vanaf %s: %s", request.remote, e)
             return _fout(HTTPStatus.FORBIDDEN, str(e))
         _LOGGER.info("Tablet %s gekoppeld aan deur %s", antw["tablet_id"], antw["deur_id"])
+        t = _reg(hass).data["tablets"].get(antw["tablet_id"])
+        if t is not None:
+            t["kanaal"] = "https" if request.secure else "http"
+        # https voor de tablets: de tablet zet deze vingerafdruk vast (ook al koppelt hij via http)
+        antw["https"] = https_info(hass)
         return self.json(antw)
 
 
@@ -101,6 +127,7 @@ class LijstView(_TabletView):
             lijst = reg.lijst_voor_deur(tablet["deur_id"], tablet)
         except ToegangFout as e:
             return _fout(HTTPStatus.NOT_FOUND, str(e))
+        tablet["laatste_lijst_ha"] = dt_util.utcnow().isoformat()
         return web.json_response(lijst, headers={"ETag": etag})
 
 
@@ -198,6 +225,9 @@ class OpenView(_TabletView):
         return self.json({"geopend": True})
 
 
+TABLET_VIEWS = (KoppelView, WachtView, LijstView, LogView, ModusView, StatusView, OpenView)
+
+
 def registreer_views(hass: HomeAssistant) -> None:
-    for view in (KoppelView, WachtView, LijstView, LogView, ModusView, StatusView, OpenView):
+    for view in TABLET_VIEWS:
         hass.http.register_view(view())
