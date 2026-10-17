@@ -36,7 +36,7 @@ Regels:
 - Wijzigingen aan de Work app of Btechnics IOT nooit zelf doen: prompt geven voor die chat (zie `claude/afspraak-work-toegang.md`
   in het claude.ai project).
 
-## Werkpunten (stand 17/10/2026, v0.8.0 live)
+## Werkpunten (stand 17/10/2026, v0.8.1 live)
 
 - Akuvox S532: live sinds 17/10 op deur Voordeur Akuvox (d_44385f). Live getest: testgebruiker toegevoegd en gewist, toestel terug op 10 gebruikers, 7 vreemde boven 700000 onaangeroerd. HTTP API laat enkel 192.168.1.117 toe.
 - Voordeur Akuvox opent via relais 1 van de S532 (/api/relay/trig) als er geen schakelaar gekozen is; foto via camera.vto_magazijn bij elke toegang (deurlog elke 5 s).

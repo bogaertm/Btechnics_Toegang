@@ -166,8 +166,8 @@ class Toegang:
         """5 foute codes of badges binnen 2 minuten op een deur: melding in HA en het klavier van de tablets 1 minuut dicht."""
         nu = int(time.time())
         lijst = [t for t in self._pogingen.get(deur_id, []) if nu - t < POGING_VENSTER]
-        for rij, _ in rijen:
-            if rij["opened"] or rij.get("persoon_id") or rij["method"] not in ("code", "badge"):
+        for rij, regel in rijen:
+            if rij["opened"] or rij.get("persoon_id") or rij["method"] not in ("code", "badge") or regel.get("reden") == "geblokkeerd":
                 continue
             if rij["uid"] in self._geteld or nu - int(rij["ts"]) > POGING_VENSTER:
                 continue

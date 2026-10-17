@@ -39,6 +39,11 @@ async def test_te_veel_foute_codes(hass, hass_client_no_auth):
     assert any("te veel foute pogingen" in (n.get("title") or "") for n in hass.data["persistent_notification"].values())
     lijst = await (await client.get(f"{API}/lijst", headers=kop)).json()
     assert lijst["deur"]["klavier_tot"] > nu.isoformat()
+    # pogingen tijdens de blokkering (reden geblokkeerd) tellen niet mee
+    events.clear()
+    await client.post(f"{API}/log", headers=kop, json={"items": [{**fout(10 + i), "reden": "geblokkeerd"} for i in range(6)]})
+    await hass.async_block_till_done()
+    assert not events
     # HA weigert ook zelf een code zolang het klavier dicht is
     pid = t["personen"][0]["id"]
     r = await client.post(f"{API}/open", headers=kop, json={"methode": "pin", "persoon_id": pid})
