@@ -152,14 +152,15 @@ class Toegang:
         async_dispatcher_send(self.hass, SIGNAL_UPDATE)
 
     async def async_registreer(self, deur: dict, *, methode: str, persoon: dict | None, opened: bool, tekst: str,
-                               wie: str | None = None) -> None:
-        """Een opening of weigering die Home Assistant zelf afhandelde (POST /open of Deur openen)."""
-        regel = {"uid": f"ha-{uuid.uuid4()}", "tijd": dt_util.now().replace(microsecond=0).isoformat(),
+                               wie: str | None = None, uid: str | None = None) -> None:
+        """Een opening of weigering die Home Assistant zelf afhandelde (POST /open of Deur openen).
+        Met uid: de tablet kreeg die al vooraf als fotovraag (Deur openen in HA)."""
+        regel = {"uid": uid or f"ha-{uuid.uuid4()}", "tijd": dt_util.now().replace(microsecond=0).isoformat(),
                  "soort": "toegang" if opened else "geweigerd", "methode": methode,
                  "persoon_id": persoon["id"] if persoon else None, "tekst": tekst, "wie": wie,
                  "deur_id": deur["id"], "deur": deur["naam"]}
         rij = self._archiefrij(regel, deur["id"], deur["naam"])
-        if opened and methode == "ha":
+        if opened and methode == "ha" and not uid:
             self.reg.foto_vragen(deur["id"], rij["uid"])   # de tablet aan die deur neemt een foto
         rij["foto"] = await self.async_foto(deur["id"], rij["uid"], rij["ts"])
         await self.hass.async_add_executor_job(self.archief.toevoegen, [rij])

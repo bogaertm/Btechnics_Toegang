@@ -5,6 +5,7 @@ Werking van codes, tijdelijke codes, statussen, planner, wijzigingen en historie
 from __future__ import annotations
 
 import logging
+import uuid
 from datetime import timedelta
 
 import voluptuous as vol
@@ -108,6 +109,9 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         d = _data(hass)
         deur = d["register"].deur_op_naam(call.data["deur"])
         wie = await _wie(hass, call)
+        # eerst de fotovraag naar de tablet: die maakt zijn camera klaar terwijl het relais schakelt
+        uid = f"ha-{uuid.uuid4()}"
+        d["register"].foto_vragen(deur["id"], uid)
         try:
             await d["toegang"].async_deur_openen(deur)
         except ToegangFout:
@@ -117,7 +121,8 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
             raise HomeAssistantError(f"Openen mislukt: {e}") from e
         d["register"].audit(wie, "deur geopend op afstand", deur["naam"], soort="deur")
         d["register"].gewijzigd(lijst_veranderd=False)
-        await d["toegang"].async_registreer(deur, methode="ha", persoon=None, opened=True, tekst="Deur openen in Home Assistant", wie=wie)
+        await d["toegang"].async_registreer(deur, methode="ha", persoon=None, opened=True, tekst="Deur openen in Home Assistant", wie=wie,
+                                              uid=uid)
 
     @_veilig
     async def modus_zetten(call: ServiceCall) -> None:
