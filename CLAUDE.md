@@ -33,8 +33,10 @@ Regels:
 - Wijzigingen aan de Work app of Btechnics IOT nooit zelf doen: prompt geven voor die chat (zie `claude/afspraak-work-toegang.md`
   in het claude.ai project).
 
-## Werkpunten (stand 17/10/2026)
+## Werkpunten (stand 17/10/2026, v0.7.1 live)
 
-Uit de postbus van 13/10 (naar-ha.md): Akuvox sync, pulsduur per deur, gezicht ontbreekt per tablet en portaallink via Work,
-afsprakendocument v0.5 als enige bron, map contract, vaste testdeur, dashboard per tablet, https poort met eigen certificaat,
-reden vermoedelijke_foto, backups nakijken, beheerders tonen en loggen wie een code bekijkt of deelt.
+- Akuvox S532: Matthias vult de HTTP API gegevens in (Instellingen, Btechnics Toegang, Configureren), daarna live test met testgebruiker en opruimen.
+- Backups: dagelijkse volledige backup 03:00, enkel lokaal (hassio.local) en NIET versleuteld; automatische backups van HA niet ingesteld. Beslissing Matthias.
+- Mac (IP) staat geblokkeerd op 8123 (ip_bans na tests met fout token): lokaal 403. Werk via https://iot.bogaert.me (HA_URL) tot de regel uit ip_bans.yaml is.
+- Work chat: mail met portaallink als `gezicht_ontbreekt` gevuld is (prompt gegeven).
+- Enkel https aanzetten zodra de app de vingerafdruk vastzet.
