@@ -18,6 +18,16 @@ from .const import SIGNAL_UPDATE, API, ARCHIEF_DAGEN, DOMAIN, OFFLINE_NA, USER_M
 from .register import Register, ToegangFout, tijdstip
 
 
+def _akuvox_deur(hass, deur_id: str) -> bool:
+    ak = hass.data.get(DOMAIN, {}).get("akuvox")
+    return bool(ak and ak.aan and ak.deur_id == deur_id)
+
+
+def _akuvox_ok(hass, deur_id: str) -> bool:
+    ak = hass.data.get(DOMAIN, {}).get("akuvox")
+    return _akuvox_deur(hass, deur_id) and ak.status.get("ok") is not False
+
+
 def _reg(hass) -> Register:
     return hass.data[DOMAIN]["register"]
 
@@ -69,10 +79,10 @@ async def ws_doors(hass, connection, msg):
         online = [t for t in tabs if reg.tablet_online(t, OFFLINE_NA)]
         recent = tg.recent.get(d["id"], [])
         doors.append({
-            "id": d["id"], "name": d["naam"], "available": bool(online),
+            "id": d["id"], "name": d["naam"], "available": bool(online) or _akuvox_ok(hass, d["id"]),
             "last_unlock": recent[0] if recent else None, "recent": recent[:10],
             "codes": sum(1 for p in reg.data["personen"].values() if p["status"] == "active" and d["id"] in p["deuren"]),
-            "cards": len(online), "tablets": len(tabs), "modus": d["modus"], "can_open": bool(d.get("open_entiteit")),
+            "cards": len(online), "tablets": len(tabs), "modus": d["modus"], "can_open": bool(d.get("open_entiteit")) or _akuvox_deur(hass, d["id"]),
             "today": today.get(d["id"], {"opened": 0, "refused": 0}),
             "entities": {"last_unlock": ent.async_get_entity_id("sensor", DOMAIN, f"{d['id']}_laatste")},
         })

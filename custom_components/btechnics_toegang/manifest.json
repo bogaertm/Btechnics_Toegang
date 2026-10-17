@@ -15,7 +15,7 @@
   "issue_tracker": "https://github.com/bogaertm/Btechnics_Toegang/issues",
   "requirements": [],
   "single_config_entry": true,
-  "version": "0.7.4",
+  "version": "0.7.5",
   "after_dependencies": [
     "frontend",
     "lovelace"
