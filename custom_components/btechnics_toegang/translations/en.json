@@ -375,6 +375,20 @@
       "name": "Clean test door",
       "description": "Unpairs test tablets and removes test persons.",
       "fields": {}
+    },
+    "tablet_hernoemen": {
+      "name": "Rename tablet",
+      "description": "Gives a paired tablet another name in HA.",
+      "fields": {
+        "tablet": {
+          "name": "Tablet",
+          "description": "Tablet id or name"
+        },
+        "naam": {
+          "name": "New name",
+          "description": "New name"
+        }
+      }
     }
   },
   "options": {

@@ -325,7 +325,7 @@ class BtxToegang extends HTMLElement {
             <span class="mt"><b>${esc(t.naam)}</b><div class="hint">${t.online ? "Online" : "Offline"}${t.laatst ? `, laatst gezien ${esc(f.compact(new Date(t.laatst)))}` : ""}${t.app_versie ? ` · app ${esc(t.app_versie)}` : ""}${t.status && t.status.schema ? ` · schema ${esc(String(t.status.schema))}` : ""}${t.status && t.status.log_wachtrij ? ` · ${t.status.log_wachtrij} logregels in wachtrij` : ""}</div>
               <div class="hint">${t.kanaal === "https" ? "Https" : t.kanaal === "http" ? `<span class="error">Nog via http</span>` : "Verbinding nog onbekend"}${t.laatste_lijst_ha ? ` · lijst opgehaald ${esc(f.compact(new Date(t.laatste_lijst_ha)))}` : ""}${t.status && t.status.laatste_lijst ? ` · geldige lijst op de tablet ${esc(f.compact(new Date(t.status.laatste_lijst)))}` : ""}</div>
               <div class="hint">${!t.gezicht_sleutel ? "Gezichten: nog geen sleutel" : t.status && typeof t.status.gezichten === "number" ? (t.status.gezichten === t.gezichten_verwacht ? `Gezichten in orde (${t.gezichten_verwacht})` : `<span class="error">Gezichten: ${t.status.gezichten} op de tablet, ${t.gezichten_verwacht} verwacht</span>`) : `Gezichten: ${t.gezichten_verwacht} verwacht`}${t.status && typeof t.status.personen === "number" ? ` · ${t.status.personen} personen op de tablet` : ""}</div></span>
-            <span class="acts"><button class="btn danger" data-a="intrekken" data-id="${t.id}"><ha-icon icon="mdi:link-off"></ha-icon> Ontkoppelen</button></span></div>`).join("")
+            <span class="acts"><button class="btn" data-a="tabnaam" data-id="${t.id}"><ha-icon icon="mdi:pencil"></ha-icon> Naam</button><button class="btn danger" data-a="intrekken" data-id="${t.id}"><ha-icon icon="mdi:link-off"></ha-icon> Ontkoppelen</button></span></div>`).join("")
           : `<div class="hint">Nog geen tablet gekoppeld.</div>`}
         ${(() => { const meld = (this._data.log || []).filter((r) => r.deur_id === d.id).slice(0, 5);
           return meld.length ? `<div class="sub">Laatste meldingen van de tablet</div>${meld.map((r) => `<div class="hint">${esc(f.compact(new Date(r.tijd)))} · ${esc(SOORT[r.soort] || r.soort)}: ${esc(r.tekst || "")}</div>`).join("")}` : ""; })()}
@@ -568,6 +568,12 @@ class BtxToegang extends HTMLElement {
           const r = await this._dienst("tablet_koppelcode", { deur: id }, true);
           this._codes[id] = { code: r.code, tot: Date.now() + 10 * 60 * 1000 };
         }, `Koppelcode gemaakt voor ${d.naam}.`);
+      case "tabnaam": {
+        const tb = this._data.tablets.find((x) => x.id === id);
+        const naam = (prompt("Nieuwe naam voor deze tablet", tb.naam) || "").trim();
+        if (!naam || naam === tb.naam) return;
+        return this._doe(() => this._dienst("tablet_hernoemen", { tablet: id, naam }), `Tablet heet nu ${naam}.`);
+      }
       case "intrekken": {
         const tb = this._data.tablets.find((x) => x.id === id);
         if (!confirm(`${tb.naam} ontkoppelen? De tablet wist dan zijn lijst en ALLE gezichten, en toont Niet gekoppeld.`)) return;

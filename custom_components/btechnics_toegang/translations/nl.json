@@ -375,6 +375,20 @@
       "name": "Testdeur opruimen",
       "description": "Ontkoppelt de testtablets en wist de testpersonen.",
       "fields": {}
+    },
+    "tablet_hernoemen": {
+      "name": "Tablet hernoemen",
+      "description": "Geeft een gekoppelde tablet een andere naam in HA.",
+      "fields": {
+        "tablet": {
+          "name": "Tablet",
+          "description": "Id of naam van de tablet"
+        },
+        "naam": {
+          "name": "Nieuwe naam",
+          "description": "Nieuwe naam"
+        }
+      }
     }
   },
   "options": {

@@ -118,6 +118,16 @@ async def test_volledige_flow(opgezet):
     rij = [r for r in await hass.async_add_executor_job(arch.recent, antw["deur_id"], 10) if r["method"] == "gezicht (vermoedelijke foto)"]
     assert rij and not rij[0]["opened"]
     assert any("vermoedelijke foto" in (n.get("title") or "") for n in hass.data["persistent_notification"].values())
+    # meetstand van de app: soort systeem blijft systeem (geen weigering, geen extra HA melding)
+    meldingen = len(hass.data["persistent_notification"])
+    meet = {"uid": "u4", "tijd": "2026-10-11T17:09:00+02:00", "soort": "systeem", "methode": "gezicht",
+            "reden": "vermoedelijke_foto", "persoon_id": jan["id"], "tekst": "model 0,31 0,28 0,40"}
+    await client.post(f"{API}/log", headers=kop, json={"items": [meet]})
+    await hass.async_block_till_done()
+    assert len(hass.data["persistent_notification"]) == meldingen
+    assert not [r for r in await hass.async_add_executor_job(arch.recent, antw["deur_id"], 10) if "meetstand" in (r.get("tekst") or "")]
+    g = next(x for x in hass.data[DOMAIN]["register"].data["gebeurtenissen"] if x.get("uid") == "u4")
+    assert g["soort"] == "systeem" and g["tekst"].startswith("meetstand: vermoedelijke foto")
 
     # openen: Jan mag, onbekende niet, Elders niet (geen recht op deze deur)
     r = await client.post(f"{API}/open", headers=kop, json={"methode": "pin", "persoon_id": jan["id"]})

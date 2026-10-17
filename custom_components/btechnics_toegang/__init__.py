@@ -198,6 +198,19 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                 raise ToegangFout(f"Tablet {tid} niet gevonden")
             tid = hits[0]
         reg.tablet_intrekken(tid, wie=await _wie(hass, call))
+
+    def _tablet_id(reg, tid: str) -> str:
+        if tid in reg.data["tablets"]:
+            return tid
+        hits = [t["id"] for t in reg.data["tablets"].values() if t["naam"].lower() == tid.lower()]
+        if len(hits) != 1:
+            raise ToegangFout(f"Tablet {tid} niet gevonden")
+        return hits[0]
+
+    @_veilig
+    async def tablet_hernoemen(call: ServiceCall) -> None:
+        reg = reg_()
+        reg.tablet_hernoemen(_tablet_id(reg, call.data["tablet"]), call.data["naam"], wie=await _wie(hass, call))
         _herlaad_entiteiten(hass)
 
     @_veilig
@@ -281,6 +294,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     dienst("tablet_koppelcode", tablet_koppelcode, vol.Schema({vol.Required("deur"): cv.string, vol.Optional("naam"): cv.string}),
            SupportsResponse.OPTIONAL)
     dienst("tablet_intrekken", tablet_intrekken, vol.Schema({vol.Required("tablet"): cv.string}))
+    dienst("tablet_hernoemen", tablet_hernoemen, vol.Schema({vol.Required("tablet"): cv.string, vol.Required("naam"): cv.string}))
     dienst("uitnodiging_maken", uitnodiging_maken, vol.Schema({vol.Required("deuren"): vol.All(cv.ensure_list, [cv.string]),
                                                                vol.Optional("naam"): cv.string, vol.Optional("geldig_van"): cv.string,
                                                                vol.Optional("geldig_tot"): cv.string, vol.Optional("schema"): [_BLOK],

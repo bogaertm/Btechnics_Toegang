@@ -245,6 +245,16 @@ tablet_intrekken:
       required: true
       selector:
         text: {}
+tablet_hernoemen:
+  fields:
+    tablet:
+      required: true
+      selector:
+        text: {}
+    naam:
+      required: true
+      selector:
+        text: {}
 uitnodiging_maken:
   fields:
     deuren:
