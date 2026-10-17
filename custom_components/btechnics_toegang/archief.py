@@ -61,6 +61,9 @@ class Archief:
         with self._lock, closing(self._conn()) as c, c:
             c.execute("PRAGMA journal_mode=WAL")
             c.executescript(SCHEMA)
+            kolommen = {r["name"] for r in c.execute("PRAGMA table_info(access)")}
+            if "foto" not in kolommen:
+                c.execute("ALTER TABLE access ADD COLUMN foto TEXT NOT NULL DEFAULT ''")
 
     def _conn(self):
         c = sqlite3.connect(self._path, timeout=30)
@@ -75,10 +78,11 @@ class Archief:
         with self._lock, closing(self._conn()) as c, c:
             voor = c.total_changes
             c.executemany(
-                "INSERT OR IGNORE INTO access (uid, door_id, door, ts, name, card, method, status, persoon_id, tekst) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT OR IGNORE INTO access (uid, door_id, door, ts, name, card, method, status, persoon_id, tekst, foto) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 [(r["uid"], r["door_id"], r["door"], int(r["ts"]), r["name"], r.get("card") or "", r["method"],
-                  "1" if r["opened"] else "0", r.get("persoon_id") or "", r.get("tekst") or "") for r in rijen])
+                  "1" if r["opened"] else "0", r.get("persoon_id") or "", r.get("tekst") or "", r.get("foto") or "")
+                 for r in rijen])
             return c.total_changes - voor
 
     def hernoem_persoon(self, persoon_id: str, naam: str) -> None:
@@ -88,15 +92,20 @@ class Archief:
 
     def recent(self, door_id: str, limit: int) -> list:
         with closing(self._conn()) as c:
-            rows = c.execute("SELECT door_id, door, ts, name, method, status FROM access WHERE door_id = ? "
+            rows = c.execute("SELECT door_id, door, ts, name, method, status, foto FROM access WHERE door_id = ? "
                              "ORDER BY ts DESC, id DESC LIMIT ?", (door_id, int(limit))).fetchall()
         return [{"door_id": r["door_id"], "door": r["door"], "ts": r["ts"], "name": r["name"], "method": r["method"],
+                 **({"photo": r["foto"]} if r["foto"] else {}),
                  "opened": r["status"] == "1"} for r in rows]
 
     def prune(self, dagen: int, now: float | None = None) -> int:
         cutoff = int((now or time.time()) - dagen * 86400)
         with self._lock, closing(self._conn()) as c, c:
             return c.execute("DELETE FROM access WHERE ts < ?", (cutoff,)).rowcount
+
+    def fotos_in_gebruik(self) -> set:
+        with closing(self._conn()) as c:
+            return {r[0] for r in c.execute("SELECT foto FROM access WHERE foto <> ''")}
 
     def query(self, tz: tzinfo, door_ids=None, search=None, person=None, status="all", start=None, end=None,
               limit=200, offset=0, max_id=None) -> dict:
@@ -129,7 +138,7 @@ class Archief:
             args.append(int(max_id))
             w = "WHERE " + " AND ".join(where)
             tot = c.execute(f"SELECT COUNT(*) n, SUM(status = '1') o FROM access {w}", args).fetchone()
-            rows = c.execute(f"SELECT id, door_id, door, ts, name, card, method, status FROM access {w} "
+            rows = c.execute(f"SELECT id, door_id, door, ts, name, card, method, status, foto FROM access {w} "
                              "ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?", args + [limit, max(0, int(offset))]).fetchall()
             raw_people = c.execute(f"SELECT name, COUNT(*) n, SUM(status = '1') o, MAX(ts) last, GROUP_CONCAT(DISTINCT door) doors "
                                    f"FROM access {w} GROUP BY name", args).fetchall()
@@ -151,7 +160,8 @@ class Archief:
         return {
             "max_id": int(max_id), "total": total, "opened": opened, "refused": total - opened,
             "rows": [{"id": r["id"], "door_id": r["door_id"], "door": r["door"], "ts": r["ts"], "name": r["name"] or "?",
-                      "card": r["card"], "method": r["method"], "opened": r["status"] == "1"} for r in rows],
+                      "card": r["card"], "method": r["method"], "opened": r["status"] == "1",
+                      **({"photo": r["foto"]} if r["foto"] else {})} for r in rows],
             "people": _merge_people(raw_people),
             "months": [{"month": m, "count": n, "opened": o} for m, (n, o) in sorted(months.items())],
             "days": [{"day": k, "count": v["count"], "opened": v["opened"], "refused": v["count"] - v["opened"],

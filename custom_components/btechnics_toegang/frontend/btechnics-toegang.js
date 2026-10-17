@@ -298,6 +298,11 @@ class BtxToegang extends HTMLElement {
       .map((s) => ({ id: s.entity_id, naam: s.attributes.friendly_name || s.entity_id }))
       .sort((a, b) => a.naam.localeCompare(b.naam, "nl"));
   }
+  _cameras() {
+    return Object.values(this._hass.states).filter((s) => s.entity_id.startsWith("camera."))
+      .map((s) => ({ id: s.entity_id, naam: s.attributes.friendly_name || s.entity_id }))
+      .sort((a, b) => a.naam.localeCompare(b.naam, "nl"));
+  }
   _entNaam(id) { const s = id && this._hass.states[id]; return s ? (s.attributes.friendly_name || id) : id; }
   _renderDeuren() {
     const { deuren, tablets } = this._data;
@@ -316,7 +321,7 @@ class BtxToegang extends HTMLElement {
           <button class="btn" data-a="deur" data-id="${d.id}"><ha-icon icon="mdi:pencil"></ha-icon> Aanpassen</button></span></div>
         <div class="seg">${MODI.map(([m, l, i]) => `<button class="${d.modus === m ? "on" : ""}" data-a="modus" data-id="${d.id}" data-m="${m}"><ha-icon icon="${i}"></ha-icon>${l}</button>`).join("")}</div>
         <div class="hint" style="margin-top:6px">Modus sinds ${esc(d.modus_sinds ? f.dateTime(new Date(d.modus_sinds)) : "?")}, gezet door ${d.modus_door === "ha" ? "Home Assistant" : esc((tablets.find((t) => t.id === d.modus_door) || {}).naam || "de tablet")}.
-          Opent met: ${d.open_entiteit ? `<b>${esc(this._entNaam(d.open_entiteit))}</b>${/^(switch|input_boolean|light)\./.test(d.open_entiteit) ? (d.puls_s ? `, gaat na ${d.puls_s} s weer uit` : ", blijft aan (pulsduur 0)") : ""}` : `<span class="error">nog niets gekozen</span>`}</div>
+          Opent met: ${!d.open_entiteit && this._data.akuvox && this._data.akuvox.aan && this._data.akuvox.deur_id === d.id ? `<b>relais 1 van de Akuvox S532</b>${d.puls_s ? `, ${d.puls_s} s` : ""}` : d.open_entiteit ? `<b>${esc(this._entNaam(d.open_entiteit))}</b>${/^(switch|input_boolean|light)\./.test(d.open_entiteit) ? (d.puls_s ? `, gaat na ${d.puls_s} s weer uit` : ", blijft aan (pulsduur 0)") : ""}` : `<span class="error">nog niets gekozen</span>`}${d.camera ? ` · Foto: <b>${esc(this._entNaam(d.camera))}</b>` : ""}</div>
         ${(() => { const a = this._data.akuvox; if (!a || a.deur_id !== d.id) return "";
           const st = !a.aan ? "sync staat uit" : a.ok === null ? "nog niet gesynct" : a.ok ? "sync in orde" : `fout: ${esc(a.fout || "?")}`;
           return `<div class="sub">Akuvox S532 (${esc(a.ip)})</div><div class="hint"><span class="dot ${a.ok ? "on" : "off"}"></span> ${st}${a.aan ? ` · ${a.eigen} personen van HA op het toestel, ${a.toestel} gebruikers in totaal${a.vreemd_boven_start ? `, ${a.vreemd_boven_start} onbekende vanaf 700001 (blijven staan)` : ""}${a.laatst ? `, laatst ${esc(f.compact(new Date(a.laatst)))}` : ""}` : ""}</div>`; })()}
@@ -349,18 +354,23 @@ class BtxToegang extends HTMLElement {
         ${ents.map((x) => `<option value="${esc(x.id)}" ${x.id === huidig ? "selected" : ""}>${esc(x.naam)} (${esc(x.id)})</option>`).join("")}</select></div>
       <div class="lbl">Pulsduur: een schakelaar of input_boolean gaat na zoveel seconden vanzelf weer uit (0 is niet terugzetten)</div>
       <div class="row"><input id="fpuls" type="number" min="0" max="60" step="1" value="${d && d.puls_s !== undefined ? d.puls_s : 5}" style="width:110px"> seconden</div>
+      <div class="lbl">Camera voor de foto bij elke toegang (enkel zichtbaar voor beheerders)</div>
+      <div class="row"><select id="fcam" style="min-width:260px;max-width:100%"><option value="">Geen foto</option>
+        ${this._cameras().map((x) => `<option value="${esc(x.id)}" ${d && x.id === d.camera ? "selected" : ""}>${esc(x.naam)} (${esc(x.id)})</option>`).join("")}</select></div>
       <div class="row"><button class="btn primary" id="fbewaar">${d ? "Bewaren" : "Deur toevoegen"}</button><button class="btn" id="fannuleer">Annuleren</button>
         ${d ? `<span style="flex:1"></span><button class="btn danger" id="fweg"><ha-icon icon="mdi:delete"></ha-icon> Deur verwijderen</button>` : ""}</div>`);
     p.querySelector("#fannuleer").addEventListener("click", () => this._sluit());
     p.querySelector("#fbewaar").addEventListener("click", () => {
       const naam = p.querySelector("#fnaam").value.trim(), ent = p.querySelector("#fent").value;
+      const puls = Math.max(0, Math.min(60, parseInt(p.querySelector("#fpuls").value, 10) || 0));
+      const cam = p.querySelector("#fcam").value;
       if (!naam) return this._bericht("Geef de deur een naam.");
       this._doe(async () => {
-        if (d) await this._dienst("deur_wijzigen", { deur: d.id, naam, open_entiteit: ent, puls_s: puls }, true);
+        if (d) await this._dienst("deur_wijzigen", { deur: d.id, naam, open_entiteit: ent, puls_s: puls, camera: cam }, true);
         else {
           const r = await this._dienst("deur_toevoegen", ent ? { naam, open_entiteit: ent } : { naam }, true);
           const nid = r && r.deur && r.deur.id;
-          if (nid && puls !== 5) await this._dienst("deur_wijzigen", { deur: nid, puls_s: puls }, true);
+          if (nid && (puls !== 5 || cam)) await this._dienst("deur_wijzigen", { deur: nid, puls_s: puls, camera: cam }, true);
         }
         this._sluit();
       }, d ? `Deur ${naam} bewaard.` : `Deur ${naam} toegevoegd. Koppel nu een tablet.`);

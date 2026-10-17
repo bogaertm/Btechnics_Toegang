@@ -126,6 +126,7 @@ class Register:
             t.pop("laatst_mono", None)
         for d in data["deuren"].values():
             d.setdefault("puls_s", PULS_STANDAARD)
+            d.setdefault("camera", None)
         for p in data["personen"].values():
             self._migreer(p)
         self.data = data
@@ -223,9 +224,14 @@ class Register:
         return d
 
     def deur_wijzigen(self, deur_id: str, naam: str | None = None, open_entiteit: str | None = None, wie: str = "",
-                      puls_s: int | None = None) -> dict:
+                      puls_s: int | None = None, camera: str | None = None) -> dict:
         d = self.deur(deur_id)
         detail = []
+        if camera is not None and (camera or None) != d.get("camera"):
+            if camera and not camera.startswith("camera."):
+                raise ToegangFout("kies een camera entiteit")
+            d["camera"] = camera or None
+            detail.append(f"foto met {camera or 'niets'}")
         if puls_s is not None:
             if not isinstance(puls_s, int) or not 0 <= puls_s <= 60:
                 raise ToegangFout("pulsduur is 0 tot 60 seconden")

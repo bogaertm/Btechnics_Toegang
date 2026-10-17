@@ -70,6 +70,10 @@
         "puls_s": {
           "name": "Pulsduur",
           "description": "Seconden waarna een schakelaar of input_boolean weer uit gaat (0 = niet)."
+        },
+        "camera": {
+          "name": "Camera",
+          "description": "Camera voor een foto bij elke toegang (leeg is geen foto)"
         }
       }
     },

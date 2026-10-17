@@ -44,6 +44,7 @@ async def test_akuvox_sync(hass, aioclient_mock):
     aioclient_mock.get(f"https://{IP}/api/doorlog/get", side_effect=nep.get)
     for a in ("add", "set", "del"):
         aioclient_mock.post(f"https://{IP}/api/user/{a}", side_effect=nep.post)
+    aioclient_mock.post(f"https://{IP}/api/relay/trig", json={"retcode": 0, "message": "OK"})
     entry = MockConfigEntry(domain=DOMAIN, data={})
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
@@ -81,26 +82,38 @@ async def test_akuvox_sync(hass, aioclient_mock):
     reg.bijwerken("test", jan["id"], schema=[{"dagen": [andere_dag], "van": "08:00", "tot": "09:00"}])
     v = await ak.async_sync()
     assert not v["toegevoegd"] and sorted(nep.users) == ["1", "2"]
-    # deurlog naar de historiek
+    # deur openen zonder schakelaar: relais 1 van de S532, met de pulsduur
+    await hass.services.async_call(DOMAIN, "deur_openen", {"deur": voordeur["id"]}, blocking=True)
+    trig = [c for c in aioclient_mock.mock_calls if str(c[1]).endswith("/api/relay/trig")]
+    assert trig and trig[-1][2]["data"] == {"num": 1, "mode": 0, "level": 0, "delay": 5}
+    # deurlog naar de historiek, met een foto van de camera van de deur
+    reg.deur_wijzigen(voordeur["id"], camera="camera.voordeur", wie="test")
     reg.bijwerken("test", jan["id"], schema=[])
     await ak.async_sync()
     nep.log = [{"ID": "41", "Date": nu.strftime("%Y-%m-%d"), "Time": nu.strftime("%H:%M:%S"), "Name": "Jan Peeters",
                 "UserID": "700001", "Type": "PrivatePIN", "Status": "Succ"},
                {"ID": "42", "Date": nu.strftime("%Y-%m-%d"), "Time": nu.strftime("%H:%M:%S"), "Name": "Cloud Jan",
                 "UserID": "12", "Type": "Card", "Status": "Failed"}]
-    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(minutes=1, seconds=5))
-    await hass.async_block_till_done()
-    for _ in range(5):
-        await asyncio.sleep(0.05)
+    from unittest.mock import AsyncMock, patch
+    with patch("custom_components.btechnics_toegang.toegang._camera_beeld", AsyncMock(return_value=b"\xff\xd8jpg")):
+        async_fire_time_changed(hass, dt_util.utcnow() + timedelta(minutes=1, seconds=5))
         await hass.async_block_till_done()
-    rij = await hass.async_add_executor_job(hass.data[DOMAIN]["toegang"].archief.recent, voordeur["id"], 10)
+        for _ in range(5):
+            await asyncio.sleep(0.05)
+            await hass.async_block_till_done()
+    rij = [r for r in await hass.async_add_executor_job(hass.data[DOMAIN]["toegang"].archief.recent, voordeur["id"], 10)
+           if r["name"] != "Op afstand"]
     assert {(r["name"], r["method"], bool(r["opened"])) for r in rij} == {("Jan Peeters", "code", True), ("Cloud Jan", "badge", False)}
+    assert all(r.get("photo", "").startswith("a_") for r in rij)
+    from custom_components.btechnics_toegang.portaal import foto_pad
+    with open(foto_pad(hass, rij[0]["photo"]), "rb") as f:
+        assert f.read() == b"\xff\xd8jpg"
     # tweede keer niets dubbel
     async_fire_time_changed(hass, dt_util.utcnow() + timedelta(minutes=2, seconds=10))
     for _ in range(5):
         await asyncio.sleep(0.05)
         await hass.async_block_till_done()
-    assert len(await hass.async_add_executor_job(hass.data[DOMAIN]["toegang"].archief.recent, voordeur["id"], 10)) == 2
+    assert len(await hass.async_add_executor_job(hass.data[DOMAIN]["toegang"].archief.recent, voordeur["id"], 10)) == 3
     # diagnose (enkel lezen)
     t = await hass.services.async_call(DOMAIN, "akuvox_test", {}, blocking=True, return_response=True)
     assert t["toestel"]["boven_700000_niet_van_ons"] == ["700500"] and t["toestel"]["van_ons"] == 1

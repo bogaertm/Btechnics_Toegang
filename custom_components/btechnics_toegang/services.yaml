@@ -43,6 +43,11 @@ deur_wijzigen:
           min: 0
           max: 60
           unit_of_measurement: s
+    camera:
+      required: false
+      selector:
+        entity:
+          domain: camera
 deur_verwijderen:
   fields:
     deur:
