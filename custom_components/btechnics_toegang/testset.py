@@ -45,4 +45,7 @@ def opruimen(reg: Register) -> dict:
     personen = [p["id"] for p in reg.data["personen"].values() if p.get("bron") == "test"]
     for pid in personen:
         reg.verwijderen("testset", pid)
-    return {"tablets": len(tablets), "personen": len(personen)}
+    # ook de testdeur zelf weg; testdeur_klaarzetten maakt ze opnieuw aan
+    if d:
+        reg.deur_verwijderen(d["id"], wie="testset")
+    return {"tablets": len(tablets), "personen": len(personen), "deur": bool(d)}
