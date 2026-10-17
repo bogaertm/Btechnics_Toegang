@@ -33,9 +33,10 @@ Regels:
 - Wijzigingen aan de Work app of Btechnics IOT nooit zelf doen: prompt geven voor die chat (zie `claude/afspraak-work-toegang.md`
   in het claude.ai project).
 
-## Werkpunten (stand 17/10/2026, v0.7.1 live)
+## Werkpunten (stand 17/10/2026, v0.7.3 live)
 
-- Akuvox S532: Matthias vult de HTTP API gegevens in (Instellingen, Btechnics Toegang, Configureren), daarna live test met testgebruiker en opruimen.
+- Akuvox S532: live sinds 17/10 op deur Voordeur Akuvox (d_44385f). Live getest: testgebruiker toegevoegd en gewist, toestel terug op 10 gebruikers, 7 vreemde boven 700000 onaangeroerd. HTTP API laat enkel 192.168.1.117 toe.
+- Enkel deurtoegang: andere integraties in HA niet opkuisen of aanpassen.
 - Backups: dagelijkse volledige backup 03:00, enkel lokaal (hassio.local) en NIET versleuteld; automatische backups van HA niet ingesteld. Beslissing Matthias.
 - Token voor scripts staat in deur-config.json onder `ha` (cfg.ha.token). Nooit met een fout token proberen: HA blokkeert dan het IP (ip_bans).
 - Work chat: mail met portaallink als `gezicht_ontbreekt` gevuld is (prompt gegeven).
