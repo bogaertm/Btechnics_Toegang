@@ -1,0 +1,14 @@
+{
+  "_uitleg": "POST /foto na (of voor) de logregel met dezelfde uid. JPEG in base64, hoogstens 400 kB, bv. 640 px breed kwaliteit 70. Enkel bij soort toegang of geweigerd. 400 bij geen JPEG of te groot.",
+  "verzoek": {
+    "uid": "c1",
+    "foto": "<JPEG base64>"
+  },
+  "antwoord": {
+    "ok": true,
+    "foto": "a_2f22765d04931a078909"
+  },
+  "fout_antwoord": {
+    "fout": "foto moet een JPEG zijn van hoogstens 400 kB"
+  }
+}

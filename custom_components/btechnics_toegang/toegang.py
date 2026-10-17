@@ -44,7 +44,12 @@ class Toegang:
             self.reg.gewijzigd(lijst_veranderd=False)
 
     async def async_foto(self, deur_id: str, uid: str, ts: int | None = None) -> str:
-        """Momentopname van de camera van de deur. Geeft het foto id terug (a_<hash>) of "". Enkel voor verse toegangen."""
+        """Foto bij een toegang. Eerst een foto die de tablet al stuurde (POST /foto), anders een momentopname van de
+        camera van de deur (enkel voor verse toegangen). Geeft het foto id terug (a_<hash>) of ""."""
+        from .portaal import foto_pad
+        fid = foto_id(uid)
+        if await self.hass.async_add_executor_job(os.path.exists, foto_pad(self.hass, fid)):
+            return fid
         deur = self.reg.data["deuren"].get(deur_id) or {}
         cam = deur.get("camera")
         if not cam or (ts and abs(time.time() - ts) > 120):
@@ -54,16 +59,19 @@ class Toegang:
         except Exception as e:  # noqa: BLE001
             _LOGGER.warning("Foto van %s voor deur %s mislukt: %s", cam, deur.get("naam"), e)
             return ""
-        sleutel = hashlib.sha1(uid.encode()).hexdigest()[:20]
-        from .portaal import foto_pad
+        await self.hass.async_add_executor_job(_schrijf_foto, foto_pad(self.hass, fid), beeld)
+        return fid
 
-        def _schrijf():
-            pad = foto_pad(self.hass, f"a_{sleutel}")
-            os.makedirs(os.path.dirname(pad), exist_ok=True)
-            with open(pad, "wb") as f:
-                f.write(beeld)
-        await self.hass.async_add_executor_job(_schrijf)
-        return f"a_{sleutel}"
+    async def async_tablet_foto(self, tablet: dict, uid: str, beeld: bytes) -> str:
+        """Foto die de tablet nam bij een toegang. Staat de logregel er al, dan krijgt die meteen de foto."""
+        from .portaal import foto_pad
+        fid = foto_id(uid)
+        await self.hass.async_add_executor_job(_schrijf_foto, foto_pad(self.hass, fid), beeld)
+        n = await self.hass.async_add_executor_job(self.archief.foto_zetten, uid, fid, tablet["deur_id"])
+        if n:
+            self.recent[tablet["deur_id"]] = await self.hass.async_add_executor_job(self.archief.recent, tablet["deur_id"], RECENT)
+            async_dispatcher_send(self.hass, SIGNAL_UPDATE)
+        return fid
 
     def _archiefrij(self, r: dict, deur_id: str | None, deur: str) -> dict | None:
         if r.get("soort") not in ("toegang", "geweigerd") or not deur_id:
@@ -116,7 +124,7 @@ class Toegang:
                 rijen.append((rij, regel))
             elif not any(g.get("uid") == uid for g in self.reg.data["gebeurtenissen"][-200:]):
                 self.reg.gebeurtenis(regel)
-        for rij, _ in rijen[-3:]:
+        for rij, _ in rijen[-10:]:
             rij["foto"] = await self.async_foto(rij["door_id"], rij["uid"], rij["ts"])
         if rijen:
             nieuw = await self.hass.async_add_executor_job(self.archief.toevoegen, [x for x, _ in rijen])
@@ -182,6 +190,16 @@ class Toegang:
                     _LOGGER.warning("Deur %s: %s terug uitzetten mislukt", deur_id, ent, exc_info=True)
 
             self._puls[deur["id"]] = async_call_later(self.hass, puls, _uit)
+
+
+def foto_id(uid: str) -> str:
+    return "a_" + hashlib.sha1(str(uid).encode()).hexdigest()[:20]
+
+
+def _schrijf_foto(pad: str, beeld: bytes) -> None:
+    os.makedirs(os.path.dirname(pad), exist_ok=True)
+    with open(pad, "wb") as f:
+        f.write(beeld)
 
 
 async def _camera_beeld(hass: HomeAssistant, cam: str) -> bytes:

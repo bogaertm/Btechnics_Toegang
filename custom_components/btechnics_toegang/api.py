@@ -5,6 +5,8 @@ Daarom staan alle views op requires_auth = False en controleren we de sleutel ze
 """
 from __future__ import annotations
 
+import base64
+import binascii
 import logging
 from http import HTTPStatus
 from typing import Any
@@ -19,6 +21,8 @@ from homeassistant.util import dt as dt_util
 from .const import API, DOMAIN, LOG_METHODES, MODI, WACHT_MAX
 from .geldigheid import reden_geweigerd
 from .register import Register, ToegangFout
+
+FOTO_MAX = 400 * 1024   # foto van de tablet bij een toegang
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -147,6 +151,29 @@ class LogView(_TabletView):
         return self.json({"ontvangen": ontvangen})
 
 
+class FotoView(_TabletView):
+    """Foto die de tablet nam bij een toegang of weigering: {uid, foto (JPEG in base64)}. uid = die van de logregel."""
+    url = f"{API}/foto"
+    name = f"api:{DOMAIN}:tabletfoto"
+
+    async def post(self, request: web.Request) -> web.Response:
+        tablet = self._tablet(request)
+        if not tablet:
+            return _fout(HTTPStatus.UNAUTHORIZED, "niet gekoppeld")
+        data = await self._json(request)
+        uid = str(data.get("uid") or "")[:64]
+        try:
+            beeld = base64.b64decode(str(data.get("foto") or ""), validate=True)
+        except (binascii.Error, ValueError):
+            beeld = b""
+        if not uid:
+            return _fout(HTTPStatus.BAD_REQUEST, "uid ontbreekt")
+        if not beeld.startswith(b"\xff\xd8") or len(beeld) > FOTO_MAX:
+            return _fout(HTTPStatus.BAD_REQUEST, f"foto moet een JPEG zijn van hoogstens {FOTO_MAX // 1024} kB")
+        fid = await request.app[KEY_HASS].data[DOMAIN]["toegang"].async_tablet_foto(tablet, uid, beeld)
+        return self.json({"ok": True, "foto": fid})
+
+
 class ModusView(_TabletView):
     url = f"{API}/modus"
     name = f"api:{DOMAIN}:modus"
@@ -225,7 +252,7 @@ class OpenView(_TabletView):
         return self.json({"geopend": True})
 
 
-TABLET_VIEWS = (KoppelView, WachtView, LijstView, LogView, ModusView, StatusView, OpenView)
+TABLET_VIEWS = (KoppelView, WachtView, LijstView, LogView, FotoView, ModusView, StatusView, OpenView)
 
 
 def registreer_views(hass: HomeAssistant) -> None:

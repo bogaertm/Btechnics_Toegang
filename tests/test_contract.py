@@ -143,6 +143,21 @@ async def test_contract(hass, hass_client_no_auth):
                                  "naar de historiek, de rest naar de tabletmeldingen.",
                       "verzoek": {"items": items}, "antwoord": log_antw, "historiek": verwacht})
 
+    # foto van de tablet bij een logregel (voor of na de logregel, beide mag)
+    jpeg = b"\xff\xd8\xff\xe0" + b"\x00" * 60 + b"\xff\xd9"
+    foto_verzoek = {"uid": "c1", "foto": base64.b64encode(jpeg).decode()}
+    r = await client.post(f"{API}/foto", headers=kop, json=foto_verzoek)
+    foto_antw = await r.json()
+    assert r.status == 200 and foto_antw["foto"].startswith("a_")
+    rij = await hass.async_add_executor_job(hass.data[DOMAIN]["toegang"].archief.recent, t["deur_id"], 10)
+    assert any(x.get("photo") == foto_antw["foto"] for x in rij)
+    fout = await client.post(f"{API}/foto", headers=kop, json={"uid": "c1", "foto": "bm9n"})
+    assert fout.status == 400
+    vergelijk("foto", {"_uitleg": "POST /foto na (of voor) de logregel met dezelfde uid. JPEG in base64, hoogstens 400 kB, bv. 640 px breed "
+                                  "kwaliteit 70. Enkel bij soort toegang of geweigerd. 400 bij geen JPEG of te groot.",
+                       "verzoek": foto_verzoek | {"foto": "<JPEG base64>"}, "antwoord": foto_antw,
+                       "fout_antwoord": await fout.json()})
+
     # open
     ok = await client.post(f"{API}/open", headers=kop, json={"methode": "pin", "persoon_id": zonder["id"]})
     nee = await client.post(f"{API}/open", headers=kop, json={"methode": "pin", "persoon_id": None})
