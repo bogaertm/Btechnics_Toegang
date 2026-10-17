@@ -39,6 +39,8 @@ class ToegangOpties(OptionsFlow):
             nieuw = {**o, **{k: v for k, v in user_input.items() if k != "akuvox_wachtwoord"}}
             if user_input.get("akuvox_wachtwoord"):
                 nieuw["akuvox_wachtwoord"] = user_input["akuvox_wachtwoord"]
+            if nieuw.get("akuvox_deur") == NIEUWE_DEUR and not nieuw.get("akuvox_aan"):
+                nieuw["akuvox_deur"] = ""   # geen deur aanmaken zolang de S532 niet aan staat
             if nieuw.get("akuvox_deur") == NIEUWE_DEUR:
                 naam = "Voordeur Akuvox"
                 bestaand = next((d for d in reg.data["deuren"].values() if d["naam"].lower() == naam.lower()), None)

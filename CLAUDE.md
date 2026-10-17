@@ -37,6 +37,6 @@ Regels:
 
 - Akuvox S532: Matthias vult de HTTP API gegevens in (Instellingen, Btechnics Toegang, Configureren), daarna live test met testgebruiker en opruimen.
 - Backups: dagelijkse volledige backup 03:00, enkel lokaal (hassio.local) en NIET versleuteld; automatische backups van HA niet ingesteld. Beslissing Matthias.
-- Mac (IP) staat geblokkeerd op 8123 (ip_bans na tests met fout token): lokaal 403. Werk via https://iot.bogaert.me (HA_URL) tot de regel uit ip_bans.yaml is.
+- Token voor scripts staat in deur-config.json onder `ha` (cfg.ha.token). Nooit met een fout token proberen: HA blokkeert dan het IP (ip_bans).
 - Work chat: mail met portaallink als `gezicht_ontbreekt` gevuld is (prompt gegeven).
-- Enkel https aanzetten zodra de app de vingerafdruk vastzet.
+- Enkel https staat aan sinds 17/10 (app v1.66 op 8443). Nieuwe tablet koppelt via 8443: tablet toont de eerste 16 tekens, Matthias vergelijkt met HA en tikt OK.
