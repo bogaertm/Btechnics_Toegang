@@ -40,7 +40,7 @@ Regels:
 
 - Akuvox S532: live sinds 17/10 op deur Voordeur Akuvox (d_44385f). Live getest: testgebruiker toegevoegd en gewist, toestel terug op 10 gebruikers, 7 vreemde boven 700000 onaangeroerd. HTTP API laat enkel 192.168.1.117 toe.
 - Voordeur Akuvox opent via relais 1 van de S532 (/api/relay/trig) als er geen schakelaar gekozen is; foto via camera.vto_magazijn bij elke toegang (deurlog elke 5 s).
-- Foto van de tablet (POST /foto, afspraak 11.8): HA klaar en live getest op de testdeur; wacht op de APK chat (bericht gegeven). Openen op afstand vanuit HA krijgt enkel een foto als de deur een camera heeft.
+- Foto van de tablet (POST /foto, afspraak 11.8): live sinds 17/10 met app v1.67 op Deur verdiep, bevestigd in HA. Openen op afstand vanuit HA krijgt enkel een foto als de deur een camera heeft.
 - Enkel deurtoegang: andere integraties in HA niet opkuisen of aanpassen.
 - Backups: dagelijkse volledige backup 03:00, enkel lokaal (hassio.local) en NIET versleuteld; automatische backups van HA niet ingesteld. Beslissing Matthias.
 - Token voor scripts staat in deur-config.json onder `ha` (cfg.ha.token). Nooit met een fout token proberen: HA blokkeert dan het IP (ip_bans).
