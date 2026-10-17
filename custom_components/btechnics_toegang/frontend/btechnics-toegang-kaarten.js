@@ -2377,7 +2377,7 @@ class VtoHandleiding extends VtoBase {
 // exist"). Daarom registreren we opnieuw zolang het nodig is, telkens via window.customElements
 // (het register dat NU actief is) en met een nieuwe subklasse (een constructor mag maar een keer).
 const CARD_CLASSES = [["btechnics-toegang-overzicht", VtoOverzicht], ["btechnics-toegang-historiek", VtoToegang], ["btechnics-toegang-codes", VtoCodes], ["btechnics-toegang-handleiding", VtoHandleiding]];
-const CARDS_VERSION = "0.7.4";
+const CARDS_VERSION = "0.7.5";
 const define = (name, cls) => {
   if (window.customElements.get(name)) return;
   try {

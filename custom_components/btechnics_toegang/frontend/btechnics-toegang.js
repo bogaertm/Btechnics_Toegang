@@ -317,7 +317,7 @@ class BtxToegang extends HTMLElement {
       const rest = c ? Math.max(0, Math.round((c.tot - nu) / 1000)) : 0;
       return `<div class="deur">
         <div class="kop"><b>${esc(d.naam)}</b><span class="acts">
-          <button class="btn" data-a="openen" data-id="${d.id}" ${d.open_entiteit ? "" : "disabled title=\"Kies eerst waarmee de deur opent\""}><ha-icon icon="mdi:door-open"></ha-icon> Deur openen</button>
+          <button class="btn" data-a="openen" data-id="${d.id}" ${d.open_entiteit || (this._data.akuvox && this._data.akuvox.aan && this._data.akuvox.deur_id === d.id) ? "" : "disabled title=\"Kies eerst waarmee de deur opent\""}><ha-icon icon="mdi:door-open"></ha-icon> Deur openen</button>
           <button class="btn" data-a="deur" data-id="${d.id}"><ha-icon icon="mdi:pencil"></ha-icon> Aanpassen</button></span></div>
         <div class="seg">${MODI.map(([m, l, i]) => `<button class="${d.modus === m ? "on" : ""}" data-a="modus" data-id="${d.id}" data-m="${m}"><ha-icon icon="${i}"></ha-icon>${l}</button>`).join("")}</div>
         <div class="hint" style="margin-top:6px">Modus sinds ${esc(d.modus_sinds ? f.dateTime(new Date(d.modus_sinds)) : "?")}, gezet door ${d.modus_door === "ha" ? "Home Assistant" : esc((tablets.find((t) => t.id === d.modus_door) || {}).naam || "de tablet")}.
