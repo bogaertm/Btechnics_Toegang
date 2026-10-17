@@ -103,15 +103,20 @@ class WachtView(_TabletView):
     name = f"api:{DOMAIN}:wacht"
 
     async def get(self, request: web.Request) -> web.Response:
-        if not self._tablet(request):
+        tablet = self._tablet(request)
+        if not tablet:
             return _fout(HTTPStatus.UNAUTHORIZED, "niet gekoppeld")
         try:
             versie = int(request.query.get("versie", "0"))
         except ValueError:
             versie = 0
         reg = _reg(request.app[KEY_HASS])
-        if await reg.wacht_op_versie(versie, WACHT_MAX):
-            return self.json({"versie": reg.versie})
+        if await reg.wacht_op_versie(versie, WACHT_MAX, tablet["id"]):
+            antwoord = {"versie": reg.versie}
+            fotos = reg.fotovragen_ophalen(tablet["id"])
+            if fotos:
+                antwoord["foto"] = fotos   # HA opende de deur: neem nu een foto en stuur ze met deze uid naar POST /foto
+            return self.json(antwoord)
         return web.Response(status=HTTPStatus.NO_CONTENT)
 
 
