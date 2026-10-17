@@ -3,7 +3,10 @@
 Home Assistant integratie voor deurtoegang bij Btechnics: personen, codes, badges, gezichten, deuren, tablets (app Btechnics Deur),
 portaal voor medewerkers en sync naar de Akuvox S532. HA (Btechnics HA, 192.168.1.117, extern https://iot.bogaert.me) is de baas.
 
-## Samenwerking via de postbus
+## Samenwerking met de APK chat
+
+Sinds 17/10/2026 19u: NIET meer via de postbus. Antwoorden voor de APK chat geven als bericht dat Matthias kopieert (venster om te kopiëren).
+Oude werkwijze hieronder enkel ter info.
 
 Map op de Mac: `~/Documents/Claude/Projects/Postbus Deurtoegang` (iCloud, op beide Macs).
 
@@ -33,9 +36,10 @@ Regels:
 - Wijzigingen aan de Work app of Btechnics IOT nooit zelf doen: prompt geven voor die chat (zie `claude/afspraak-work-toegang.md`
   in het claude.ai project).
 
-## Werkpunten (stand 17/10/2026, v0.7.3 live)
+## Werkpunten (stand 17/10/2026, v0.7.5 live)
 
 - Akuvox S532: live sinds 17/10 op deur Voordeur Akuvox (d_44385f). Live getest: testgebruiker toegevoegd en gewist, toestel terug op 10 gebruikers, 7 vreemde boven 700000 onaangeroerd. HTTP API laat enkel 192.168.1.117 toe.
+- Voordeur Akuvox opent via relais 1 van de S532 (/api/relay/trig) als er geen schakelaar gekozen is; foto via camera.vto_magazijn bij elke toegang (deurlog elke 5 s).
 - Enkel deurtoegang: andere integraties in HA niet opkuisen of aanpassen.
 - Backups: dagelijkse volledige backup 03:00, enkel lokaal (hassio.local) en NIET versleuteld; automatische backups van HA niet ingesteld. Beslissing Matthias.
 - Token voor scripts staat in deur-config.json onder `ha` (cfg.ha.token). Nooit met een fout token proberen: HA blokkeert dan het IP (ip_bans).
