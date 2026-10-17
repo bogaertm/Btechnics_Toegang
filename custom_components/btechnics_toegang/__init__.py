@@ -92,7 +92,8 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     async def deur_wijzigen(call: ServiceCall) -> ServiceResponse:
         reg = reg_()
         d = reg.deur_wijzigen(reg.deur_op_naam(call.data["deur"])["id"], call.data.get("naam"),
-                              call.data.get("open_entiteit"), wie=await _wie(hass, call), puls_s=call.data.get("puls_s"))
+                              call.data.get("open_entiteit"), wie=await _wie(hass, call), puls_s=call.data.get("puls_s"),
+                              camera=call.data.get("camera"))
         _herlaad_entiteiten(hass)
         return {"deur": d}
 
@@ -268,7 +269,8 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
            SupportsResponse.OPTIONAL)
     dienst("deur_wijzigen", deur_wijzigen, vol.Schema({vol.Required("deur"): cv.string, vol.Optional("naam"): cv.string,
                                                        vol.Optional("open_entiteit"): vol.Any("", cv.entity_id),
-                                                       vol.Optional("puls_s"): vol.All(vol.Coerce(int), vol.Range(min=0, max=60))}),
+                                                       vol.Optional("puls_s"): vol.All(vol.Coerce(int), vol.Range(min=0, max=60)),
+                                                       vol.Optional("camera"): vol.Any("", cv.entity_id)}),
            SupportsResponse.OPTIONAL)
     dienst("deur_verwijderen", deur_verwijderen, vol.Schema({vol.Required("deur"): cv.string}))
     dienst("deur_openen", deur_openen, vol.Schema({vol.Required("deur"): cv.string}))
@@ -378,11 +380,29 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if not ak.aan:
             return
         await ak.async_sync()
+
+    bezig = {"log": False}
+
+    async def _akuvox_log(_now=None):
+        """Deurlog van de S532 elke 5 s ophalen, zodat de camerafoto op het juiste moment genomen wordt."""
+        if not ak.aan or bezig["log"]:
+            return
+        bezig["log"] = True
+        try:
+            await _akuvox_log_doe()
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception("Akuvox deurlog mislukt")
+        finally:
+            bezig["log"] = False
+
+    async def _akuvox_log_doe():
         try:
             rijen = await ak.async_deurlog()
         except AkuvoxFout as e:
             _LOGGER.debug("Akuvox deurlog: %s", e)
             return
+        for r in rijen[-3:]:
+            r["foto"] = await tg.async_foto(r["door_id"], r["uid"], r["ts"])
         if rijen:
             nieuw = await hass.async_add_executor_job(tg.archief.toevoegen, rijen)
             if nieuw:
@@ -422,7 +442,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if n:
             _LOGGER.info("Archief: %d toegangen ouder dan %d dagen gewist", n, ARCHIEF_DAGEN)
 
+        def _fotos_weg():
+            import os
+            from .portaal import TOEGANG_FOTO_MAP
+            map_ = hass.config.path(TOEGANG_FOTO_MAP)
+            if not os.path.isdir(map_):
+                return 0
+            nodig = {f[2:] + ".jpg" for f in tg.archief.fotos_in_gebruik()}
+            weg = [f for f in os.listdir(map_) if f.endswith(".jpg") and f not in nodig]
+            for f in weg:
+                os.remove(os.path.join(map_, f))
+            return len(weg)
+        m = await hass.async_add_executor_job(_fotos_weg)
+        if m:
+            _LOGGER.info("Archief: %d toegangsfoto's zonder toegang gewist", m)
+
     entry.async_on_unload(async_track_time_interval(hass, _planner, timedelta(minutes=1)))
+    entry.async_on_unload(async_track_time_interval(hass, _akuvox_log, timedelta(seconds=5)))
     entry.async_on_unload(async_track_time_interval(hass, _opruimen, timedelta(hours=12)))
     await _planner()
     hass.async_create_task(_opruimen())

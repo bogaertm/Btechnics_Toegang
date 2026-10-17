@@ -187,6 +187,16 @@ class Akuvox:
         staat["volgende"] = n + 1
         return str(n)
 
+    # ------------------------------------------------------------------ openen
+
+    async def async_open(self, seconden: int = 5, relais: int = 1) -> None:
+        """Relais van de S532 aansturen (deur openen). Valt na `seconden` vanzelf af (mode 0)."""
+        if not self.aan:
+            raise AkuvoxFout("Akuvox staat uit")
+        await self._vraag("POST", "/api/relay/trig", {"target": "relay", "action": "trig",
+                                                       "data": {"num": int(relais), "mode": 0, "level": 0,
+                                                                "delay": max(1, min(60, int(seconden)))}})
+
     # ------------------------------------------------------------------ deurlog
 
     async def async_deurlog(self) -> list[dict]:

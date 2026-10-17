@@ -2,7 +2,10 @@
 events en de cache van recente toegangen per deur (voor sensoren en het overzicht)."""
 from __future__ import annotations
 
+import hashlib
 import logging
+import os
+import time
 import uuid
 from datetime import datetime
 
@@ -39,6 +42,28 @@ class Toegang:
             await self.hass.async_add_executor_job(self.archief.toevoegen, rijen)
             self.reg._oud_log = []
             self.reg.gewijzigd(lijst_veranderd=False)
+
+    async def async_foto(self, deur_id: str, uid: str, ts: int | None = None) -> str:
+        """Momentopname van de camera van de deur. Geeft het foto id terug (a_<hash>) of "". Enkel voor verse toegangen."""
+        deur = self.reg.data["deuren"].get(deur_id) or {}
+        cam = deur.get("camera")
+        if not cam or (ts and abs(time.time() - ts) > 120):
+            return ""
+        try:
+            beeld = await _camera_beeld(self.hass, cam)
+        except Exception as e:  # noqa: BLE001
+            _LOGGER.warning("Foto van %s voor deur %s mislukt: %s", cam, deur.get("naam"), e)
+            return ""
+        sleutel = hashlib.sha1(uid.encode()).hexdigest()[:20]
+        from .portaal import foto_pad
+
+        def _schrijf():
+            pad = foto_pad(self.hass, f"a_{sleutel}")
+            os.makedirs(os.path.dirname(pad), exist_ok=True)
+            with open(pad, "wb") as f:
+                f.write(beeld)
+        await self.hass.async_add_executor_job(_schrijf)
+        return f"a_{sleutel}"
 
     def _archiefrij(self, r: dict, deur_id: str | None, deur: str) -> dict | None:
         if r.get("soort") not in ("toegang", "geweigerd") or not deur_id:
@@ -91,6 +116,8 @@ class Toegang:
                 rijen.append((rij, regel))
             elif not any(g.get("uid") == uid for g in self.reg.data["gebeurtenissen"][-200:]):
                 self.reg.gebeurtenis(regel)
+        for rij, _ in rijen[-3:]:
+            rij["foto"] = await self.async_foto(rij["door_id"], rij["uid"], rij["ts"])
         if rijen:
             nieuw = await self.hass.async_add_executor_job(self.archief.toevoegen, [x for x, _ in rijen])
             if nieuw:
@@ -124,11 +151,16 @@ class Toegang:
                  "persoon_id": persoon["id"] if persoon else None, "tekst": tekst, "wie": wie,
                  "deur_id": deur["id"], "deur": deur["naam"]}
         rij = self._archiefrij(regel, deur["id"], deur["naam"])
+        rij["foto"] = await self.async_foto(deur["id"], rij["uid"], rij["ts"])
         await self.hass.async_add_executor_job(self.archief.toevoegen, [rij])
         await self._na_toevoegen(deur["id"], [(rij, regel)])
 
     async def async_deur_openen(self, deur: dict) -> None:
         ent = deur.get("open_entiteit")
+        ak = self.hass.data.get(DOMAIN, {}).get("akuvox")
+        if not ent and ak and ak.aan and ak.deur_id == deur["id"]:
+            await ak.async_open(deur.get("puls_s", PULS_STANDAARD) or 5)
+            return
         if not ent:
             raise ToegangFout(f"Voor deur {deur['naam']} is geen schakelaar of script gekozen")
         domein = ent.split(".")[0]
@@ -150,6 +182,11 @@ class Toegang:
                     _LOGGER.warning("Deur %s: %s terug uitzetten mislukt", deur_id, ent, exc_info=True)
 
             self._puls[deur["id"]] = async_call_later(self.hass, puls, _uit)
+
+
+async def _camera_beeld(hass: HomeAssistant, cam: str) -> bytes:
+    from homeassistant.components.camera import async_get_image
+    return (await async_get_image(hass, cam, timeout=8)).content
 
 
 def ts_lokaal(ts: int) -> datetime:

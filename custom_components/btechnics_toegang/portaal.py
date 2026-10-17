@@ -31,7 +31,12 @@ GEZICHT_JS = f"/btechnics_toegang_static/gezicht/gezicht.mjs?v={VERSIE}"
 KOPPEN = {"Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Robots-Tag": "noindex, nofollow"}
 
 
+TOEGANG_FOTO_MAP = "btechnics_toegang/toegangsfotos"
+
+
 def foto_pad(hass, pid: str) -> str:
+    if pid.startswith("a_"):   # foto bij een toegang (camera van de deur)
+        return hass.config.path(TOEGANG_FOTO_MAP, f"{pid[2:]}.jpg")
     return hass.config.path(FOTO_MAP, f"{pid}.jpg")
 
 

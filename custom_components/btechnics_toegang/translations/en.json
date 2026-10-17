@@ -70,6 +70,10 @@
         "puls_s": {
           "name": "Pulse duration",
           "description": "Seconds after which a switch or input_boolean is turned off again (0 = never)."
+        },
+        "camera": {
+          "name": "Camera",
+          "description": "Camera for a snapshot at every access (empty is none)"
         }
       }
     },
