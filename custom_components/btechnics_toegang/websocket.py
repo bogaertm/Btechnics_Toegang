@@ -28,6 +28,18 @@ def _akuvox_ok(hass, deur_id: str) -> bool:
     return _akuvox_deur(hass, deur_id) and ak.status.get("ok") is not False
 
 
+def _action_url(hass) -> str | None:
+    wid = _reg(hass).data.get("akuvox", {}).get("webhook")
+    if not wid:
+        return None
+    try:
+        from homeassistant.helpers.network import get_url
+        basis = get_url(hass, allow_external=False, allow_cloud=False)
+    except Exception:  # noqa: BLE001
+        basis = "http://192.168.1.117:8123"
+    return f"{basis}/api/webhook/{wid}"
+
+
 def _reg(hass) -> Register:
     return hass.data[DOMAIN]["register"]
 
@@ -417,7 +429,8 @@ def ws_data(hass, connection, msg):
     h = hass.data[DOMAIN].get("https")
     https = {**(https_info(hass) or {}), "kort": kort(h.vingerafdruk) if h else "", "fout": h.fout if h else "uit"}
     ak = hass.data[DOMAIN].get("akuvox")
-    akuvox = {**ak.status, "deur_id": ak.deur_id, "ip": ak.ip} if ak and ak.ip else None
+    akuvox = {**ak.status, "deur_id": ak.deur_id, "ip": ak.ip, "action_url": _action_url(hass),
+              "melding_laatst": _reg(hass).data.get("akuvox", {}).get("melding_laatst")} if ak and ak.ip else None
     connection.send_result(msg["id"], {"deuren": deuren, "tablets": tablets, "log": gebeurtenissen, "versie": d["versie"], "akuvox": akuvox, "https": https,
                                        "personen": [{"id": p["id"], "naam": p["naam"], "deuren": p["deuren"], "status": p["status"]}
                                                     for p in d["personen"].values()]})
