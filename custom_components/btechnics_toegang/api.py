@@ -230,7 +230,9 @@ class OpenView(_TabletView):
             return _fout(HTTPStatus.NOT_FOUND, "deur bestaat niet meer")
         persoon = reg.data["personen"].get(data.get("persoon_id") or "")
         reden = None
-        if methode in ("pin", "kaart", "gezicht"):
+        if methode in ("pin", "kaart") and (deur.get("klavier_tot") or "") > dt_util.now().isoformat(timespec="seconds"):
+            reden = "geblokkeerd"   # te veel foute pogingen: HA weigert ook als de tablet het klavier niet dichtzet
+        elif methode in ("pin", "kaart", "gezicht"):
             if not persoon or tablet["deur_id"] not in persoon["deuren"]:
                 reden = "onbekend"
             elif persoon["status"] != "active":

@@ -15,7 +15,7 @@ from homeassistant.helpers.event import async_call_later
 from homeassistant.util import dt as dt_util
 
 from .archief import Archief
-from .const import DOMAIN, EVENT_TOEGANG, LOG_METHODES, LOG_REDENEN, LOG_SOORTEN, PULS_STANDAARD, SIGNAL_UPDATE
+from .const import POGING_BLOK, POGING_MAX, POGING_VENSTER, DOMAIN, EVENT_TOEGANG, LOG_METHODES, LOG_REDENEN, LOG_SOORTEN, PULS_STANDAARD, SIGNAL_UPDATE
 from .register import Register, ToegangFout
 
 _LOGGER = logging.getLogger(__name__)
@@ -31,6 +31,9 @@ class Toegang:
         self.hass, self.reg, self.archief = hass, reg, archief
         self.recent: dict[str, list[dict]] = {}
         self._puls: dict[str, object] = {}
+        self._pogingen: dict[str, list[int]] = {}   # deur -> tijdstippen van foute codes/badges (laatste 2 min)
+        self._geteld: list[str] = []
+        self.vooraf_beeld: dict[str, tuple[float, bytes]] = {}   # deur -> (tijd, jpeg) genomen bij de melding van het toestel                # uids die al meetelden (dubbel doorsturen telt niet)
 
     async def async_start(self) -> None:
         for did in self.reg.data["deuren"]:
@@ -54,13 +57,27 @@ class Toegang:
         cam = deur.get("camera")
         if not cam or (ts and abs(time.time() - ts) > 120):
             return ""
+        vooraf = self.vooraf_beeld.get(deur_id)
         try:
-            beeld = await _camera_beeld(self.hass, cam)
+            if vooraf and ts and abs(vooraf[0] - ts) <= 15:
+                beeld = vooraf[1]   # momentopname die al genomen werd toen het toestel de poging meldde (Action URL)
+            else:
+                beeld = await _camera_beeld(self.hass, cam)
         except Exception as e:  # noqa: BLE001
             _LOGGER.warning("Foto van %s voor deur %s mislukt: %s", cam, deur.get("naam"), e)
             return ""
         await self.hass.async_add_executor_job(_schrijf_foto, foto_pad(self.hass, fid), beeld)
         return fid
+
+    async def async_vooraf_beeld(self, deur_id: str) -> None:
+        """Het toestel meldt een poging (Akuvox Action URL): meteen een momentopname, nog voor het deurlog gelezen is."""
+        cam = (self.reg.data["deuren"].get(deur_id) or {}).get("camera")
+        if not cam:
+            return
+        try:
+            self.vooraf_beeld[deur_id] = (time.time(), await _camera_beeld(self.hass, cam))
+        except Exception as e:  # noqa: BLE001
+            _LOGGER.debug("Momentopname %s mislukt: %s", cam, e)
 
     async def async_tablet_foto(self, tablet: dict, uid: str, beeld: bytes) -> str:
         """Foto die de tablet nam bij een toegang. Staat de logregel er al, dan krijgt die meteen de foto."""
@@ -145,7 +162,35 @@ class Toegang:
         self.hass.bus.async_fire(f"{DOMAIN}_vermoedelijke_foto", {"tablet": tablet["naam"], "deur_id": tablet["deur_id"],
                                                                   "persoon_id": regel.get("persoon_id"), "score": regel.get("score")})
 
+    def _foute_pogingen(self, deur_id: str, rijen: list[tuple[dict, dict]]) -> None:
+        """5 foute codes of badges binnen 2 minuten op een deur: melding in HA en het klavier van de tablets 1 minuut dicht."""
+        nu = int(time.time())
+        lijst = [t for t in self._pogingen.get(deur_id, []) if nu - t < POGING_VENSTER]
+        for rij, _ in rijen:
+            if rij["opened"] or rij.get("persoon_id") or rij["method"] not in ("code", "badge"):
+                continue
+            if rij["uid"] in self._geteld or nu - int(rij["ts"]) > POGING_VENSTER:
+                continue
+            self._geteld = (self._geteld + [rij["uid"]])[-500:]
+            lijst.append(int(rij["ts"]))
+        self._pogingen[deur_id] = lijst
+        if len(lijst) < POGING_MAX:
+            return
+        self._pogingen[deur_id] = []
+        deur = self.reg.data["deuren"].get(deur_id)
+        if not deur:
+            return
+        tot = self.reg.klavier_blokkeren(deur_id, POGING_BLOK)
+        from homeassistant.components import persistent_notification
+        persistent_notification.async_create(
+            self.hass, f"Deur **{deur['naam']}**: {len(lijst)} foute codes of badges binnen {POGING_VENSTER // 60} minuten. "
+            f"Het klavier van de tablet is {POGING_BLOK} seconden geblokkeerd (tot {tot[11:16]}).",
+            title="Btechnics Toegang: te veel foute pogingen", notification_id=f"{DOMAIN}_pogingen_{deur_id}")
+        self.hass.bus.async_fire(f"{DOMAIN}_te_veel_pogingen", {"deur_id": deur_id, "deur": deur["naam"], "aantal": len(lijst),
+                                                               "geblokkeerd_tot": tot})
+
     async def _na_toevoegen(self, deur_id: str, rijen: list[tuple[dict, dict]]) -> None:
+        self._foute_pogingen(deur_id, rijen)
         self.recent[deur_id] = await self.hass.async_add_executor_job(self.archief.recent, deur_id, RECENT)
         for rij, regel in rijen:
             self.hass.bus.async_fire(EVENT_TOEGANG, {**regel, "persoon": rij["name"], "opened": rij["opened"]})

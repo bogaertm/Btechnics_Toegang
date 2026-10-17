@@ -37,7 +37,7 @@ class NepAkuvox:
         return AiohttpClientMockResponse(method, url, json={"retcode": 0, "message": "OK"})
 
 
-async def test_akuvox_sync(hass, aioclient_mock):
+async def test_akuvox_sync(hass, aioclient_mock, hass_client_no_auth):
     await hass.config.async_set_time_zone("Europe/Brussels")
     nep = NepAkuvox()
     aioclient_mock.get(f"https://{IP}/api/user/get", side_effect=nep.get)
@@ -114,6 +114,23 @@ async def test_akuvox_sync(hass, aioclient_mock):
         await asyncio.sleep(0.05)
         await hass.async_block_till_done()
     assert len(await hass.async_add_executor_job(hass.data[DOMAIN]["toegang"].archief.recent, voordeur["id"], 10)) == 3
+    # Action URL: de S532 meldt een poging, HA neemt meteen een foto en leest het deurlog zonder op de 5 s te wachten
+    nu2 = dt_util.now()
+    nep.log.append({"ID": "43", "Date": nu2.strftime("%Y-%m-%d"), "Time": nu2.strftime("%H:%M:%S"), "Name": "Jan Peeters",
+                    "UserID": "700001", "Type": "PrivatePIN", "Status": "Succ"})
+    wid = reg.data["akuvox"]["webhook"]
+    from unittest.mock import AsyncMock, patch
+    with patch("custom_components.btechnics_toegang.toegang._camera_beeld", AsyncMock(return_value=b"\xff\xd8vooraf")) as cam:
+        client = await hass_client_no_auth()
+        r = await client.get(f"/api/webhook/{wid}")
+        assert r.status == 200
+        for _ in range(5):
+            await asyncio.sleep(0.05)
+            await hass.async_block_till_done()
+        assert cam.await_count == 1   # enkel de momentopname bij de melding, niet nog eens bij het deurlog
+    rij = await hass.async_add_executor_job(hass.data[DOMAIN]["toegang"].archief.recent, voordeur["id"], 10)
+    assert len(rij) == 4 and rij[0].get("photo")
+    assert reg.data["akuvox"].get("melding_laatst")
     # diagnose (enkel lezen)
     t = await hass.services.async_call(DOMAIN, "akuvox_test", {}, blocking=True, return_response=True)
     assert t["toestel"]["boven_700000_niet_van_ons"] == ["700500"] and t["toestel"]["van_ons"] == 1

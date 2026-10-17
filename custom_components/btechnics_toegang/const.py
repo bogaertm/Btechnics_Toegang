@@ -29,7 +29,7 @@ USER_MAX_DAYS = 7
 USER_MAX_AHEAD_DAYS = 31
 LOG_SOORTEN = ["toegang", "fout", "geweigerd", "alarm", "systeem", "oproep"]
 LOG_METHODES = ["pin", "kaart", "gezicht", "ha", "knop"]
-LOG_REDENEN = ["onbekend", "buiten_schema", "verlopen", "vermoedelijke_foto"]
+LOG_REDENEN = ["onbekend", "buiten_schema", "verlopen", "vermoedelijke_foto", "geblokkeerd"]
 
 EVENT_TOEGANG = f"{DOMAIN}_toegang"
 SIGNAL_UPDATE = f"{DOMAIN}_update"
@@ -61,3 +61,7 @@ GEZICHT_TOESTEMMING = (
 )
 
 PULS_STANDAARD = 5  # seconden: een schakelaar of input_boolean zet HA na het openen zelf terug uit (0 = niet)
+
+POGING_MAX = 5          # foute codes of badges ...
+POGING_VENSTER = 120    # ... binnen zoveel seconden ...
+POGING_BLOK = 60        # ... dan het klavier van de tablet zoveel seconden dicht

@@ -291,6 +291,15 @@ class Register:
         self.audit(wie, "verwijderd", d["naam"], soort="deur")
         self.gewijzigd()
 
+    def klavier_blokkeren(self, deur_id: str, seconden: int) -> str:
+        """Klavier van de tablets van deze deur tijdelijk dicht (na te veel foute codes). Code, badge en gezicht wachten tot dan."""
+        from datetime import timedelta
+        d = self.deur(deur_id)
+        d["klavier_tot"] = _iso(_nu() + timedelta(seconds=seconden))
+        self.audit("toegang", "klavier geblokkeerd", d["naam"], soort="deur", detail=f"te veel foute pogingen, tot {d['klavier_tot'][11:16]}")
+        self.gewijzigd()
+        return d["klavier_tot"]
+
     def modus_zetten(self, deur_id: str, modus: str, door: str) -> dict:
         if modus not in MODI:
             raise ToegangFout(f"Onbekende modus {modus}, kies uit {', '.join(MODI)}")
@@ -629,7 +638,8 @@ class Register:
             })
         personen.sort(key=lambda x: x["naam"].lower())
         return {"schema": 1, "versie": self.versie, "gemaakt": _iso(_nu()),
-                "deur": {k: d[k] for k in ("id", "naam", "modus", "modus_sinds", "modus_door")},
+                "deur": {**{k: d[k] for k in ("id", "naam", "modus", "modus_sinds", "modus_door")},
+                         "klavier_tot": d.get("klavier_tot") if (d.get("klavier_tot") or "") > _iso(_nu()) else None},
                 "hash": {"algoritme": "sha256-iter", "rondes": 2000}, "gezicht_kdf": None, "personen": personen}
 
     @staticmethod

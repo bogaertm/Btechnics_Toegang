@@ -7,6 +7,7 @@
   "config_flow": true,
   "dependencies": [
     "http",
+    "webhook",
     "websocket_api"
   ],
   "documentation": "https://github.com/bogaertm/Btechnics_Toegang",
@@ -15,7 +16,7 @@
   "issue_tracker": "https://github.com/bogaertm/Btechnics_Toegang/issues",
   "requirements": [],
   "single_config_entry": true,
-  "version": "0.7.9",
+  "version": "0.8.0",
   "after_dependencies": [
     "frontend",
     "lovelace"

@@ -5,10 +5,13 @@ Werking van codes, tijdelijke codes, statussen, planner, wijzigingen en historie
 from __future__ import annotations
 
 import logging
+import secrets
 import uuid
 from datetime import timedelta
 
 import voluptuous as vol
+
+from homeassistant.util import dt as dt_util
 
 from homeassistant.components import persistent_notification
 from homeassistant.config_entries import ConfigEntry
@@ -386,19 +389,45 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             return
         await ak.async_sync()
 
-    bezig = {"log": False}
+    bezig = {"log": False, "nog": False}
 
     async def _akuvox_log(_now=None):
-        """Deurlog van de S532 elke 5 s ophalen, zodat de camerafoto op het juiste moment genomen wordt."""
-        if not ak.aan or bezig["log"]:
+        """Deurlog van de S532 ophalen: elke 5 s, en meteen als de S532 een poging meldt via de Action URL."""
+        if not ak.aan:
+            return
+        if bezig["log"]:
+            bezig["nog"] = True
             return
         bezig["log"] = True
         try:
-            await _akuvox_log_doe()
+            while True:
+                bezig["nog"] = False
+                await _akuvox_log_doe()
+                if not bezig["nog"]:
+                    break
         except Exception:  # noqa: BLE001
             _LOGGER.exception("Akuvox deurlog mislukt")
         finally:
             bezig["log"] = False
+
+    # Action URL op de S532: http://<HA>:8123/api/webhook/<id> bij elke poging (code, badge, relais)
+    from homeassistant.components import webhook as ha_webhook
+    staat = reg.data.setdefault("akuvox", {"gebruikers": {}, "volgende": 700001, "laatste_log": ""})
+    if not staat.get("webhook"):
+        staat["webhook"] = "btx_akuvox_" + secrets.token_hex(12)
+        reg._bewaar()  # noqa: SLF001
+
+    async def _akuvox_melding(hass_, webhook_id, request):
+        if ak.aan:
+            staat["melding_laatst"] = dt_util.utcnow().isoformat()
+            reg._bewaar()  # noqa: SLF001
+            await tg.async_vooraf_beeld(ak.deur_id)
+            hass.async_create_task(_akuvox_log())
+        return None
+
+    ha_webhook.async_register(hass, DOMAIN, "Btechnics Toegang Akuvox", staat["webhook"], _akuvox_melding,
+                              local_only=True, allowed_methods=["GET", "POST"])
+    entry.async_on_unload(lambda: ha_webhook.async_unregister(hass, staat["webhook"]))
 
     async def _akuvox_log_doe():
         try:
