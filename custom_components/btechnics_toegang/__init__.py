@@ -310,6 +310,29 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     return True
 
 
+def _toestellen_opruimen(hass: HomeAssistant, entry: ConfigEntry) -> int:
+    """Toestellen van deuren en tablets die niet meer in het register staan, uit HA halen (met hun entiteiten)."""
+    from homeassistant.helpers import device_registry as dr
+    reg = hass.data[DOMAIN]["register"]
+    bestaand = set(reg.data["deuren"]) | set(reg.data["tablets"])
+    dreg, n = dr.async_get(hass), 0
+    for dev in dr.async_entries_for_config_entry(dreg, entry.entry_id):
+        ids = {i[1] for i in dev.identifiers if i[0] == DOMAIN}
+        if ids and not ids & bestaand:
+            dreg.async_update_device(dev.id, remove_config_entry_id=entry.entry_id)
+            n += 1
+    if n:
+        _LOGGER.info("%d oude toestellen van deuren of tablets opgeruimd", n)
+    return n
+
+
+async def async_remove_config_entry_device(hass: HomeAssistant, entry: ConfigEntry, device) -> bool:
+    """Manueel verwijderen in HA mag enkel voor een deur of tablet die niet meer bestaat."""
+    reg = hass.data[DOMAIN]["register"]
+    bestaand = set(reg.data["deuren"]) | set(reg.data["tablets"])
+    return not any(i[0] == DOMAIN and i[1] in bestaand for i in device.identifiers)
+
+
 def _herlaad_entiteiten(hass: HomeAssistant) -> None:
     entry: ConfigEntry | None = hass.data[DOMAIN].get("entry")
     if entry:
@@ -370,6 +393,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     uitgesteld = {"h": None}
 
     def _na_wijziging():
+        _toestellen_opruimen(hass, entry)
         if not ak.aan:
             return
         if uitgesteld["h"]:
@@ -403,6 +427,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await _planner()
     hass.async_create_task(_opruimen())
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    _toestellen_opruimen(hass, entry)
     return True
 
 
