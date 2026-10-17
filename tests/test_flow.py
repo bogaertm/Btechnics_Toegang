@@ -139,6 +139,18 @@ async def test_volledige_flow(opgezet):
     g = next(x for x in hass.data[DOMAIN]["register"].data["gebeurtenissen"] if x.get("uid") == "u4")
     assert g["soort"] == "systeem" and g["tekst"].startswith("meetstand: vermoedelijke foto")
 
+    # openen op afstand in HA: de tablet krijgt via /wacht de vraag om een foto met de uid van die toegang
+    reg = hass.data[DOMAIN]["register"]
+    v = reg.versie
+    await hass.services.async_call(DOMAIN, "deur_openen", {"deur": antw["deur_id"]}, blocking=True)
+    w = await client.get(f"{API}/wacht?versie={reg.versie}", headers=kop)
+    vraag = (await w.json())["foto"]
+    assert w.status == 200 and len(vraag) == 1 and vraag[0].startswith("ha-")
+    r = await client.post(f"{API}/foto", headers=kop, json={"uid": vraag[0], "foto": base64.b64encode(b"\xff\xd8\xff\xd9").decode()})
+    fid = (await r.json())["foto"]
+    rijen = await hass.async_add_executor_job(arch.recent, antw["deur_id"], 10)
+    assert rijen[0]["name"] == "Op afstand" and rijen[0].get("photo") == fid
+    assert reg.fotovragen_ophalen(antw["tablet_id"]) == [] and v <= reg.versie
     # openen: Jan mag, onbekende niet, Elders niet (geen recht op deze deur)
     r = await client.post(f"{API}/open", headers=kop, json={"methode": "pin", "persoon_id": jan["id"]})
     assert r.status == 200 and (await r.json())["geopend"] is True
@@ -158,9 +170,9 @@ async def test_volledige_flow(opgezet):
     assert r.status == 403
     r = await client.post(f"{API}/open", headers=kop, json={"methode": "knop"})
     assert r.status == 200
-    assert len(calls) == 2
+    assert len(calls) == 3   # deur_openen op afstand + 2x /open
     # HA schrijft zelf geen dubbele regel bij /open (de tablet logt zelf)
-    assert len(await hass.async_add_executor_job(arch.recent, antw["deur_id"], 10)) == 4
+    assert len(await hass.async_add_executor_job(arch.recent, antw["deur_id"], 10)) == 5
 
     # status: tablet online
     r = await client.post(f"{API}/status", headers=kop, json={"app_versie": "1.60", "version_code": 54,

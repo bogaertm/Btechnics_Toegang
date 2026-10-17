@@ -159,6 +159,8 @@ class Toegang:
                  "persoon_id": persoon["id"] if persoon else None, "tekst": tekst, "wie": wie,
                  "deur_id": deur["id"], "deur": deur["naam"]}
         rij = self._archiefrij(regel, deur["id"], deur["naam"])
+        if opened and methode == "ha":
+            self.reg.foto_vragen(deur["id"], rij["uid"])   # de tablet aan die deur neemt een foto
         rij["foto"] = await self.async_foto(deur["id"], rij["uid"], rij["ts"])
         await self.hass.async_add_executor_job(self.archief.toevoegen, [rij])
         await self._na_toevoegen(deur["id"], [(rij, regel)])

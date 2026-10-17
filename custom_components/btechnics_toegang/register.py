@@ -171,15 +171,46 @@ class Register:
         async with self._wijziging:
             self._wijziging.notify_all()
 
-    async def wacht_op_versie(self, versie: int, max_s: float) -> bool:
-        if self.data["versie"] != versie:
+    async def wacht_op_versie(self, versie: int, max_s: float, tablet_id: str | None = None) -> bool:
+        def klaar() -> bool:
+            return self.data["versie"] != versie or bool(tablet_id and self._open_fotovragen(tablet_id))
+        if klaar():
             return True
         try:
             async with self._wijziging:
-                await asyncio.wait_for(self._wijziging.wait_for(lambda: self.data["versie"] != versie), max_s)
+                await asyncio.wait_for(self._wijziging.wait_for(klaar), max_s)
             return True
         except asyncio.TimeoutError:
             return False
+
+    # ------------------------------------------------------------------ foto vragen aan de tablet
+
+    def foto_vragen(self, deur_id: str, uid: str) -> int:
+        """HA opende de deur zelf (op afstand): vraag de tablets van die deur om een foto met deze uid (30 s geldig)."""
+        if not hasattr(self, "_fotovragen"):
+            self._fotovragen = {}
+        tot = time.time() + 30
+        n = 0
+        for t in self.data["tablets"].values():
+            if t["deur_id"] == deur_id:
+                self._fotovragen.setdefault(t["id"], []).append({"uid": uid, "tot": tot})
+                self._fotovragen[t["id"]] = self._fotovragen[t["id"]][-5:]
+                n += 1
+        if n:
+            self.hass.async_create_task(self._wek())
+        return n
+
+    def _open_fotovragen(self, tablet_id: str) -> list:
+        lijst = [v for v in getattr(self, "_fotovragen", {}).get(tablet_id, []) if v["tot"] > time.time()]
+        if hasattr(self, "_fotovragen"):
+            self._fotovragen[tablet_id] = lijst
+        return lijst
+
+    def fotovragen_ophalen(self, tablet_id: str) -> list[str]:
+        lijst = self._open_fotovragen(tablet_id)
+        if hasattr(self, "_fotovragen"):
+            self._fotovragen[tablet_id] = []
+        return [v["uid"] for v in lijst]
 
     @property
     def versie(self) -> int:
