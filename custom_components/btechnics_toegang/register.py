@@ -731,6 +731,16 @@ class Register:
         self.audit(wie, "tablet ontkoppeld", self.data["deuren"].get(t["deur_id"], {}).get("naam", "?"), soort="deur", detail=t["naam"])
         self.gewijzigd(lijst_veranderd=False)
 
+    def tablet_hernoemen(self, tablet_id: str, naam: str, wie: str = "") -> None:
+        t = self.data["tablets"].get(tablet_id)
+        naam = (naam or "").strip()[:60]
+        if not t or not naam:
+            raise ToegangFout("Tablet of naam ontbreekt")
+        oud, t["naam"] = t["naam"], naam
+        self.audit(wie, "tablet hernoemd", self.data["deuren"].get(t["deur_id"], {}).get("naam", "?"), soort="deur",
+                   detail=f"{oud} wordt {naam}")
+        self.gewijzigd(lijst_veranderd=False)
+
     def tablet_status(self, tablet: dict, status: dict) -> str | None:
         """Geeft een foutmelding over de publieke sleutel terug, of None."""
         tablet["status"] = {k: status.get(k) for k in ("app_versie", "version_code", "versie", "log_wachtrij", "batterij", "nfc",

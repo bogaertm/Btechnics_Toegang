@@ -76,10 +76,15 @@ class Toegang:
             if isinstance(r.get("score"), (int, float)) and not isinstance(r.get("score"), bool):
                 regel["score"] = round(float(r["score"]), 3)
             if regel["reden"] == "vermoedelijke_foto":
-                regel["soort"] = "geweigerd"
+                # Meetstand van de app: soort systeem, deur niet tegengehouden. Enkel een tabletmelding, geen HA melding.
+                meet = regel["soort"] == "systeem"
+                if not meet:
+                    regel["soort"] = "geweigerd"
                 score = f", score {regel['score']}" if "score" in regel else ""
-                regel["tekst"] = f"vermoedelijke foto{score}" + (f": {regel['tekst']}" if regel["tekst"] else "")
-                self._melding_foto(tablet, deur, regel)
+                regel["tekst"] = (("meetstand: " if meet else "") + f"vermoedelijke foto{score}"
+                                  + (f": {regel['tekst']}" if regel["tekst"] else ""))[:200]
+                if not meet:
+                    self._melding_foto(tablet, deur, regel)
             ontvangen.append(uid)
             rij = self._archiefrij(regel, tablet["deur_id"], deur.get("naam", ""))
             if rij:
