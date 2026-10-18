@@ -80,6 +80,7 @@ class Werk:
             "deur_toevoegen": (("naam",), ("naam",), self.deur_toevoegen),
             "deur_hernoemen": (("deur", "naam"), ("deur", "naam"), self.deur_hernoemen),
             "tablet_koppelcode": (("deur", "naam"), ("deur",), self.tablet_koppelcode),
+            "geheim_zetten": (("geheim",), ("geheim",), self.geheim_zetten),
         }
 
     def uitvoeren(self, actie: str, velden: dict, door: str = "") -> dict:
@@ -252,6 +253,11 @@ class Werk:
         d = self.reg.deur_op_naam(_tekst(v["deur"], "deur", leeg=False))
         self.reg.deur_wijzigen(d["id"], naam=_tekst(v["naam"], "naam", 40, leeg=False), wie=wie)
         return {"deur": d["id"], "naam": d["naam"]}
+
+    def geheim_zetten(self, wie: str, v: dict) -> dict:
+        """Work zet het gedeelde geheim voor de knop Toegang (links zonder code, 10 min geldig)."""
+        self.reg.werk_geheim_zetten(wie, v.get("geheim"))
+        return {"ok": True}
 
     def tablet_koppelcode(self, wie: str, v: dict) -> dict:
         d = self.reg.deur_op_naam(_tekst(v["deur"], "deur", leeg=False))
