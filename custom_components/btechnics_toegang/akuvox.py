@@ -256,7 +256,15 @@ class Akuvox:
         """Enkel lezen: wat ziet HA op het toestel (voor de instellingen en de diagnose)."""
         lijst = await self.gebruikers()
         eigen = {i["userid"] for i in self._staat["gebruikers"].values()}
-        return {"gebruikers": len(lijst), "van_ons": sum(1 for x in lijst if str(x.get("UserID")) in eigen),
+        try:
+            log = await self._vraag("GET", "/api/doorlog/get?page=1")
+            ruw_log = [{k: v for k, v in x.items() if k not in ("PicUrl", "Image")} for x in ((log.get("data") or {}).get("item") or [])[:6]]
+        except AkuvoxFout as e:
+            ruw_log = [str(e)]
+        return {"eigen_gebruikers": [{k: v for k, v in x.items() if k not in ("PrivatePIN", "CardCode", "BLE_AuthCode")}
+                                     for x in lijst if str(x.get("UserID")) in eigen],
+                "deurlog": ruw_log,
+                "gebruikers": len(lijst), "van_ons": sum(1 for x in lijst if str(x.get("UserID")) in eigen),
                 "bronnen": sorted({str(x.get("Source", "?")) for x in lijst}),
                 "velden": sorted({k for x in lijst for k in x}),
                 "boven_700000_niet_van_ons": [str(x.get("UserID")) for x in lijst if str(x.get("UserID", "")).isdigit()
