@@ -259,7 +259,31 @@ class OpenView(_TabletView):
         return self.json({"geopend": True})
 
 
-TABLET_VIEWS = (KoppelView, WachtView, LijstView, LogView, FotoView, ModusView, StatusView, OpenView)
+class HerverpakView(_TabletView):
+    """Enkel voor de gezichtsserver: afdrukken doorzetten naar nieuwe toestellen zonder nieuwe scan.
+    GET geeft taken (verpakte sleutel voor de server + publieke sleutels van de doelen), POST {persoon_id, sleutels: {pubkey_id: ...}}."""
+    url = f"{API}/herverpak"
+    name = f"api:{DOMAIN}:herverpak"
+
+    async def get(self, request: web.Request) -> web.Response:
+        t = self._tablet(request)
+        if not t or t.get("soort") != "server":
+            return _fout(HTTPStatus.UNAUTHORIZED, "enkel voor de gezichtsserver")
+        return self.json({"taken": _reg(request.app[KEY_HASS]).herverpak_taken(t)})
+
+    async def post(self, request: web.Request) -> web.Response:
+        t = self._tablet(request)
+        if not t or t.get("soort") != "server":
+            return _fout(HTTPStatus.UNAUTHORIZED, "enkel voor de gezichtsserver")
+        data = await self._json(request)
+        try:
+            n = _reg(request.app[KEY_HASS]).herverpak_zetten(t, str(data.get("persoon_id") or ""), data.get("sleutels") or {})
+        except ToegangFout as e:
+            return _fout(HTTPStatus.BAD_REQUEST, str(e))
+        return self.json({"ok": True, "nieuw": n})
+
+
+TABLET_VIEWS = (KoppelView, WachtView, LijstView, LogView, FotoView, ModusView, StatusView, OpenView, HerverpakView)
 
 
 def registreer_views(hass: HomeAssistant) -> None:

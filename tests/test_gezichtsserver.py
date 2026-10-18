@@ -61,3 +61,71 @@ async def test_gezichtsserver(hass_klaar, hass_ws_client, hass_client_no_auth):
     # onbekende persoon: geweigerd, deur blijft dicht
     r = await client.post(f"{API}/open", headers=kop, json={"methode": "gezicht", "persoon_id": "p_bestaatniet", "log": False})
     assert r.status == 403 and (await r.json())["reden"] == "onbekend" and len(oproepen) == 1
+
+
+async def test_doorzetten_zonder_nieuwe_scan(hass_klaar, hass_ws_client, hass_client_no_auth):
+    """Nieuwe tablet of extra deur: de gezichtsserver zet de afdruk door, de medewerker scant niet opnieuw."""
+    from homeassistant.core import callback
+    hass = hass_klaar
+    client = await hass_client_no_auth()
+    reg = _reg(hass)
+    await hass.services.async_call(DOMAIN, "deur_toevoegen", {"naam": "Magazijn2"}, blocking=True)
+    binnen, magazijn = _deur(hass, "Vergaderzaal"), _deur(hass, "Magazijn2")
+
+    async def koppel(deur, soort=None):
+        priv, pub = _sleutelpaar()
+        code = (await hass.services.async_call(DOMAIN, "tablet_koppelcode", {"deur": deur}, blocking=True, return_response=True))["code"]
+        k = await (await client.post(f"{API}/koppel", json={"code": code, "toestel_id": deur + (soort or ""), "pubkey": pub,
+                                                             **({"soort": soort} if soort else {})})).json()
+        return priv, {"Authorization": f"Bearer {k['sleutel']}"}
+
+    srv_priv, srv = await koppel("Magazijn2", "server")
+    t1_priv, t1 = await koppel("Vergaderzaal")
+    # medewerker enkel voor Vergaderzaal: gsm versleutelt voor tablet 1 en voor de server als bewaarder
+    ws = await hass_ws_client(hass)
+    r = await _ws(ws, 1, type=f"{DOMAIN}/uitnodiging", doors=[binnen], naam="Lien")
+    pad = r["result"]["url"][r["result"]["url"].index("/api/"):]
+    r = await client.post(pad + "/aanmelden", json={"voornaam": "Lien", "achternaam": "Maes", "telefoon": "1", "email": "l@m.be",
+                                                     "akkoord": True, "pin": "740163", "pin2": "740163", "foto": JPEG})
+    eigen = (await r.json())["url"]; eigen = eigen[eigen.index("/api/"):]
+    info = await (await client.get(eigen + "/info")).json()
+    assert sorted(t["deur"] for t in info["gezicht"]["tablets"]) == ["Nieuwe toestellen", "Vergaderzaal"]
+    afdrukken = [np.random.RandomState(i).randn(192).astype(np.float32) for i in range(3)]
+    assert (await client.post(eigen + "/gezicht", json={**_gsm_pakket(info, afdrukken), "huidige_pin": "740163"})).status == 200
+    # server ziet haar niet in zijn lijst (geen toegang tot Magazijn2) en heeft nog niets door te zetten
+    assert (await (await client.get(f"{API}/lijst", headers=srv)).json())["personen"] == []
+    assert (await (await client.get(f"{API}/herverpak", headers=srv)).json())["taken"] == []
+    assert (await client.get(f"{API}/herverpak", headers=t1)).status == 401
+    # nieuwe tablet aan Vergaderzaal: geen mail om opnieuw te scannen, wel een taak voor de server
+    gemeld = []
+    hass.bus.async_listen(f"{DOMAIN}_gezicht_ontbreekt", callback(lambda e: gemeld.append(e.data)))
+    t2_priv, t2 = await koppel("Vergaderzaal")
+    await hass.async_block_till_done()
+    assert gemeld == []
+
+    async def server_doet():
+        taken = (await (await client.get(f"{API}/herverpak", headers=srv)).json())["taken"]
+        for tk in taken:
+            aes = srv_priv.decrypt(base64.b64decode(tk["sleutel"]), OAEP)
+            sl = {}
+            for d in tk["doel"]:
+                from cryptography.hazmat.primitives import serialization
+                pub = serialization.load_der_public_key(base64.b64decode(d["pubkey"]))
+                sl[d["pubkey_id"]] = base64.b64encode(pub.encrypt(aes, OAEP)).decode()
+            r = await (await client.post(f"{API}/herverpak", headers=srv, json={"persoon_id": tk["persoon_id"], "sleutels": sl})).json()
+            assert r["nieuw"] == len(tk["doel"])
+        return len(taken)
+
+    assert await server_doet() == 1
+    gz = (await (await client.get(f"{API}/lijst", headers=t2)).json())["personen"][0]["gezicht"]
+    aes = t2_priv.decrypt(base64.b64decode(gz["sleutel"]), OAEP)
+    klaar = json.loads(AESGCM(aes).decrypt(base64.b64decode(gz["iv"]), base64.b64decode(gz["data"]), gz["aad"].encode()))
+    assert len(klaar["afdrukken"]) == 3
+    assert await server_doet() == 0
+    # extra deur Magazijn2: de server leest ze nu zelf, zonder nieuwe scan
+    p = [x for x in reg.data["personen"].values() if x["naam"] == "Lien Maes"][0]
+    await hass.services.async_call(DOMAIN, "persoon_wijzigen", {"persoon": p["id"], "deuren": [binnen, magazijn]}, blocking=True)
+    assert (await (await client.get(f"{API}/lijst", headers=srv)).json())["personen"][0]["gezicht"]
+    # vreemde sleutel voor een toestel dat er niet bij hoort: genegeerd
+    r = await (await client.post(f"{API}/herverpak", headers=srv, json={"persoon_id": p["id"], "sleutels": {"x" * 64: "A" * 344}})).json()
+    assert r["nieuw"] == 0
