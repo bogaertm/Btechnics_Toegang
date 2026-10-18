@@ -36,8 +36,11 @@ class AkuvoxFout(Exception):
     pass
 
 
+VELDEN_VERSIE = 2   # verhogen als de velden naar het toestel veranderen: dan zet de sync iedereen opnieuw
+
+
 def _pinhash(naam: str, pin: str) -> str:
-    return hashlib.sha256(f"{naam}\n{pin}".encode()).hexdigest()[:16]
+    return hashlib.sha256(f"{naam}\n{pin}\n{VELDEN_VERSIE}".encode()).hexdigest()[:16]
 
 
 def optie_prefix(nr: int) -> str:
@@ -165,7 +168,9 @@ class Akuvox:
             for pid, w in gewenst.items():
                 info = eigen.get(pid)
                 h = _pinhash(w["naam"], w["pin"])
-                velden = {"Name": w["naam"], "PrivatePIN": w["pin"], relay_veld: f"{SCHEDULE_ALTIJD}-1;", "WebRelay": "0",
+                # zoals de gebruikers die wel werken op de S532: schema Always op relais 1, met activatierecht en groep
+                velden = {"Name": w["naam"], "PrivatePIN": w["pin"], relay_veld: f"{SCHEDULE_ALTIJD}-1;",
+                          "RelayScheduleActivationPermission": "1", "Group": "Default", "WebRelay": "0",
                           "LiftFloorNum": "0"}
                 try:
                     if info and info["userid"] in per_userid:
