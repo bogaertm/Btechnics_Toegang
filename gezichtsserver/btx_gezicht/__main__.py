@@ -19,7 +19,7 @@ from .beslissing import Beslisser, Instellingen
 from .ha import HA, wacht_tot
 from .herkenning import Herkenner
 
-VERSIE = "0.1.0"
+VERSIE = "0.1.1"
 LOG = logging.getLogger("btx")
 
 
