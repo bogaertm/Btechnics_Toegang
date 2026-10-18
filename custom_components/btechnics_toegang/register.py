@@ -658,7 +658,7 @@ class Register:
         uit = []
         for t in self.data["tablets"].values():
             if t["deur_id"] in p["deuren"] and t.get("pubkey"):
-                uit.append({"pubkey_id": t["pubkey_id"], "pubkey": t["pubkey"], "tablet": t["naam"],
+                uit.append({"pubkey_id": t["pubkey_id"], "pubkey": t["pubkey"], "tablet": t["naam"], "soort": t.get("soort", "tablet"),
                             "deur": self.data["deuren"].get(t["deur_id"], {}).get("naam", "?")})
         return uit
 
@@ -712,7 +712,8 @@ class Register:
                                                                                    "werk_id": p.get("werk_id")} for p in missen]})
             from homeassistant.components import persistent_notification
             persistent_notification.async_create(
-                self.hass, f"Tablet **{t['naam']}** heeft een nieuwe sleutel. Gezichtsherkenning werkt daar nog niet voor: "
+                self.hass, f"{'Gezichtsserver' if t.get('soort') == 'server' else 'Tablet'} **{t['naam']}** heeft een nieuwe sleutel. "
+                f"Gezichtsherkenning werkt daar nog niet voor: "
                 f"{', '.join(p['naam'] for p in missen)}. Zij scannen opnieuw via hun portaallink "
                 "(Btechnics Work stuurt die automatisch voor gekoppelde medewerkers).",
                 title="Btechnics Toegang: opnieuw scannen", notification_id=f"{DOMAIN}_gezicht_{t['id']}")
@@ -734,7 +735,10 @@ class Register:
         self._foute_koppelpogingen = 0
         return code
 
-    def koppelen(self, code: str, toestel_id: str, naam: str | None, app_versie: str | None, pubkey=None) -> dict:
+    def koppelen(self, code: str, toestel_id: str, naam: str | None, app_versie: str | None, pubkey=None,
+                 soort: str | None = None) -> dict:
+        """soort "server": de gezichtsserver (container op Unraid) voor een deur met camera. Die gebruikt dezelfde
+        endpoints als een tablet (/lijst, /wacht, /status, /open met methode gezicht, /foto)."""
         nu = time.monotonic()
         info = self._koppelcodes.get(str(code).strip())
         if not info or info["tot"] < nu:
@@ -748,7 +752,9 @@ class Register:
             if toestel_id and t.get("toestel_id") == toestel_id:
                 del self.data["tablets"][tid]
         sleutel = secrets.token_urlsafe(32)
-        t = {"id": _id("t"), "deur_id": info["deur_id"], "naam": (naam or info["naam"] or "Tablet").strip(),
+        soort = "server" if soort == "server" else "tablet"
+        standaard = "Gezichtsserver" if soort == "server" else "Tablet"
+        t = {"id": _id("t"), "soort": soort, "deur_id": info["deur_id"], "naam": (naam or info["naam"] or standaard).strip()[:60],
              "toestel_id": toestel_id or None, "sleutel_hash": sleutel_hash(sleutel), "gekoppeld": _iso(_nu()),
              "app_versie": app_versie, "status": {}, "laatst": None}
         self.data["tablets"][t["id"]] = t
@@ -757,7 +763,8 @@ class Register:
                 self._pubkey_zetten(t, pubkey)
             except ToegangFout:
                 pass  # koppelen lukt toch; de tablet krijgt de fout bij /status
-        self.audit("tablet", "tablet gekoppeld", self.data["deuren"][t["deur_id"]]["naam"], soort="deur", detail=t["naam"])
+        self.audit("tablet", "gezichtsserver gekoppeld" if soort == "server" else "tablet gekoppeld",
+                   self.data["deuren"][t["deur_id"]]["naam"], soort="deur", detail=t["naam"])
         self.gewijzigd(lijst_veranderd=False)
         if self.bij_nieuwe_tablet:
             self.bij_nieuwe_tablet()

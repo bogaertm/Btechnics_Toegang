@@ -101,7 +101,7 @@ async def test_contract(hass, hass_client_no_auth):
              "afdrukken": [base64.b64encode(a.tobytes()).decode() for a in afdrukken]}
     sleutel, iv = AESGCM.generate_key(256), os.urandom(12)
     data = AESGCM(sleutel).encrypt(iv, json.dumps(klaar).encode(), info["aad"].encode())
-    pakket = {"versie": info["versie"], "toestemming": "v1", "toestemming_hash": info["toestemming"]["hash"], "aantal": 3,
+    pakket = {"versie": info["versie"], "toestemming": info["toestemming"]["versie"], "toestemming_hash": info["toestemming"]["hash"], "aantal": 3,
               "iv": base64.b64encode(iv).decode(), "data": base64.b64encode(data).decode(),
               "sleutels": {info["tablets"][0]["pubkey_id"]: base64.b64encode(priv.public_key().encrypt(sleutel, OAEP)).decode()}}
     assert (await client.post(eigen + "/gezicht", json={**pakket, "huidige_pin": "582947"})).status == 200

@@ -169,7 +169,7 @@ function privacy() {
   const b = INFO.bedrijf;
   return `<details><summary>Privacyverklaring</summary>
     <p>${esc(b.naam)} (${esc(b.verantwoordelijke)}, ${esc(b.adres)}) bewaart je naam, gsm-nummer, e-mailadres, foto en toegangscode om de toegang tot het gebouw te beheren en om te weten wie wanneer binnenkwam. Elke toegang wordt 400 dagen bewaard.</p>
-    <p>Je foto dient enkel om je te herkennen. Ze wordt niet gebruikt voor automatische gezichtsherkenning. Gezichtsherkenning zet je enkel zelf aan, met een aparte toestemming op je persoonlijke pagina: dan wordt op je gsm een versleutelde gezichtsafdruk gemaakt die enkel de deurtablets kunnen lezen. Je gegevens blijven op de eigen server in het gebouw en gaan niet naar derden.</p>
+    <p>Je foto dient enkel om je te herkennen. Ze wordt niet gebruikt voor automatische gezichtsherkenning. Gezichtsherkenning zet je enkel zelf aan, met een aparte toestemming op je persoonlijke pagina: dan wordt op je gsm een versleutelde gezichtsafdruk gemaakt die enkel de deurtablets en de gezichtsserver in het gebouw kunnen lezen. Je gegevens blijven op de eigen server in het gebouw en gaan niet naar derden.</p>
     <p>Zodra je geen toegang meer nodig hebt, worden je gegevens en je foto gewist. Je kan altijd vragen om je gegevens in te zien, te verbeteren of te wissen via <a href="mailto:${esc(b.email)}">${esc(b.email)}</a>. Ben je niet tevreden, dan kan je terecht bij de Gegevensbeschermingsautoriteit (gegevensbeschermingsautoriteit.be).</p></details>`;
 }
 function gezichtUitleg() {
@@ -183,7 +183,7 @@ function gezichtKaart() {
   if (!g.tablets.length) return `<div class="kaart">${kop}<p class="uitleg" style="margin:0">${g.ingesteld ? "Ingesteld, maar geen enkele deur is er nu klaar voor." : "Nog geen enkele deur is klaar voor gezichtsherkenning. Je code werkt gewoon."}</p></div>`;
   const mist = g.tablets.filter((t) => !t.heeft);
   if (!g.ingesteld) return `<div class="kaart">${kop}
-    <p class="uitleg">Open de deur door gewoon voor de tablet te staan. Je scant daarvoor een keer je gezicht met je gsm. Dat duurt een halve minuut. Je code blijft altijd werken.</p>
+    <p class="uitleg">Open de deur door gewoon voor de tablet of de camera aan de deur te staan. Je scant daarvoor een keer je gezicht met je gsm. Dat duurt een halve minuut. Je code blijft altijd werken.</p>
     <button class="knop" id="gz-start">Gezichtsherkenning instellen</button></div>`;
   return `<div class="kaart">${kop}
     <div class="rij"><span>Sinds</span><span>${esc(datum(g.sinds))}</span></div>
@@ -191,7 +191,7 @@ function gezichtKaart() {
     ${mist.length ? `<div class="waarschuwing">Op ${mist.map((t) => esc(t.deur)).join(", ")} werkt het nog niet. Scan opnieuw om het daar ook aan te zetten.</div>` : ""}
     <button class="knop ${mist.length ? "" : "zacht"}" id="gz-start">Opnieuw scannen</button>
     <details style="margin-top:12px"><summary>Uitzetten en wissen</summary>
-      <p>De afdruk wordt gewist, ook op de tablets. Je code blijft werken.</p>
+      <p>De afdruk wordt gewist, ook op de tablets en de gezichtsserver. Je code blijft werken.</p>
       <label for="gz-pin">Je huidige code</label><input id="gz-pin" class="pin" type="password" inputmode="numeric" autocomplete="current-password" maxlength="${INFO.pin.max}">
       <div id="gz-m" class="melding"></div>
       <button class="knop zacht" id="gz-wis">Gezichtsherkenning uitzetten</button></details></div>`;
@@ -390,7 +390,7 @@ async function verwerk(gz, pin, opnames) {
       await post("/gezicht", { ...pakket, huidige_pin: pin });
       $("#titel").textContent = "Gezichtsherkenning staat aan";
       $("#ondertitel").textContent = "";
-      $("#main").innerHTML = `<div class="kaart"><h2>Klaar</h2><p class="uitleg">Binnen een minuut herkent de tablet je. Kijk gewoon naar de tablet naast de deur. Je code blijft ook werken.</p>
+      $("#main").innerHTML = `<div class="kaart"><h2>Klaar</h2><p class="uitleg">Binnen een minuut herkent de deur je. Kijk gewoon naar de tablet of de camera naast de deur. Je code blijft ook werken.</p>
         <button class="knop" id="gz-terug">Naar mijn pagina</button></div>`;
       $("#gz-terug").addEventListener("click", () => laad());
     } catch (e) {

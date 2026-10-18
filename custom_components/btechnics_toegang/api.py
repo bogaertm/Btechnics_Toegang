@@ -84,7 +84,7 @@ class KoppelView(_TabletView):
         try:
             antw = _reg(hass).koppelen(
                 str(data.get("code", "")), str(data.get("toestel_id") or ""),
-                data.get("naam"), data.get("app_versie"), data.get("pubkey"),
+                data.get("naam"), data.get("app_versie"), data.get("pubkey"), data.get("soort"),
             )
         except ToegangFout as e:
             _LOGGER.warning("Koppelen geweigerd vanaf %s: %s", request.remote, e)
