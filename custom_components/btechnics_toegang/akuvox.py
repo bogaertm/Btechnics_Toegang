@@ -264,8 +264,8 @@ class Akuvox:
         geheim = ("PrivatePIN", "CardCode", "BLE_AuthCode", "PhoneNum", "QrCodeUrl")
         try:
             schemas = (await self._vraag("GET", "/api/schedule/get?page=1")).get("data")
-        except AkuvoxFout as e:
-            schemas = str(e)
+        except Exception as e:  # noqa: BLE001  enkel diagnose
+            schemas = str(e)[:200]
         return {"eigen_gebruikers": [{k: v for k, v in x.items() if k not in geheim} for x in lijst if str(x.get("UserID")) in eigen],
                 "andere_gebruikers": [{k: v for k, v in x.items() if k in ("Source", "ScheduleRelay", "RelayScheduleActivationPermission", "Group", "WebRelay")}
                                       for x in lijst if str(x.get("UserID")) not in eigen][:4],
