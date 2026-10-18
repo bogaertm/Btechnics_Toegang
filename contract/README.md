@@ -16,3 +16,17 @@ Vergeleken worden de velden en hun types; ids, tijden en hashes verschillen per 
 | testsleutel-tablet.pem | RSA sleutel enkel voor tests, nooit op een echte tablet |
 
 Opnieuw maken: `CONTRACT_SCHRIJF=1 python -m pytest tests/test_contract.py`. Controle: `python -m pytest tests/test_contract.py`.
+
+## Gezichtsserver (v0.10.0)
+
+De gezichtsserver (container op Unraid) voor een deur met camera (Akuvox) gebruikt hetzelfde protocol als een tablet:
+
+| Stap | Endpoint | Verschil met een tablet |
+|---|---|---|
+| Koppelen | POST /koppel | extra veld `"soort": "server"`, eigen RSA sleutel (SPKI DER base64), toestel_id `gezichtsserver-<deur>` |
+| Lijst | GET /lijst | gezichtspakketten verpakt voor de sleutel van de server |
+| Herkend | POST /open | `{"methode": "gezicht", "persoon_id": ..., "log": false}`: HA controleert uren en status, opent het relais van de Akuvox en logt met foto van de camera |
+| Status | POST /status | zelfde velden, `gezichten` = aantal ontsleutelde personen |
+| Foto | POST /foto | optioneel: beeld van het moment van herkennen bij de uid die /wacht vraagt |
+
+Per deur koppelt de server apart (eigen koppelcode). Toestemming v2 vermeldt de gezichtsserver; pakketten met v1 blijven geldig voor de tablets.

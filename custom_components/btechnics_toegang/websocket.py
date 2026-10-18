@@ -88,7 +88,7 @@ async def ws_doors(hass, connection, msg):
     ent = er.async_get(hass)
     doors = []
     for d in sorted(reg.data["deuren"].values(), key=lambda x: x["naam"].lower()):
-        tabs = [t for t in reg.data["tablets"].values() if t["deur_id"] == d["id"]]
+        tabs = [t for t in reg.data["tablets"].values() if t["deur_id"] == d["id"] and t.get("soort") != "server"]
         online = [t for t in tabs if reg.tablet_online(t, OFFLINE_NA)]
         recent = tg.recent.get(d["id"], [])
         doors.append({
@@ -419,7 +419,7 @@ async def ws_errors(hass, connection, msg):
 def ws_data(hass, connection, msg):
     reg = _reg(hass)
     d = reg.data
-    tablets = [{"id": t["id"], "naam": t["naam"], "deur_id": t["deur_id"], "app_versie": t.get("app_versie"),
+    tablets = [{"id": t["id"], "naam": t["naam"], "deur_id": t["deur_id"], "app_versie": t.get("app_versie"), "soort": t.get("soort", "tablet"),
                 "gekoppeld": t.get("gekoppeld"), "laatst": t.get("laatst"), "online": reg.tablet_online(t, OFFLINE_NA),
                 "status": t.get("status") or {}, "gezicht_sleutel": bool(t.get("pubkey")), "kanaal": t.get("kanaal"),
                 "laatste_lijst_ha": t.get("laatste_lijst_ha"), "gezichten_verwacht": reg.gezichten_verwacht(t)} for t in d["tablets"].values()]

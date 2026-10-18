@@ -36,7 +36,7 @@ Regels:
 - Wijzigingen aan de Work app of Btechnics IOT nooit zelf doen: prompt geven voor die chat (zie `claude/afspraak-work-toegang.md`
   in het claude.ai project).
 
-## Werkpunten (stand 18/10/2026, v0.9.0 live)
+## Werkpunten (stand 18/10/2026, v0.10.0 live)
 
 - Akuvox S532: live sinds 17/10 op deur Voordeur Akuvox (d_44385f). Live getest: testgebruiker toegevoegd en gewist, toestel terug op 10 gebruikers, 7 vreemde boven 700000 onaangeroerd. HTTP API laat enkel 192.168.1.117 toe.
 - Voordeur Akuvox opent via relais 1 van de S532 (/api/relay/trig) als er geen schakelaar gekozen is; foto via camera.vto_magazijn bij elke toegang (deurlog elke 5 s).
@@ -48,8 +48,9 @@ Regels:
 - S532 firmware 532.30.10.315 heeft lokaal GEEN gezichtsbeheer (enkel via SmartPlus, niet aanraken).
 - Beslist 18/10: gezichtsherkenning voor Akuvox deuren via eigen container op Unraid naast Frigate (zelfde pipeline als de tablet, met echtheid). Volgorde: 1) back-ups versleutelen, 2) meerdere Akuvox toestellen (max 2), 3) server als eigen toestel met sleutel + toestemmingstekst v2, 4) container, 5) nachtmeting infrarood. Openen enkel bij groot recht gezicht, 2 s stil.
 - Twee Akuvox toestellen (v0.9.0): opties akuvox_* (toestel 1) en akuvox2_* (toestel 2), opslag reg.data akuvox en akuvox2, elk eigen webhook, mapping vanaf 700001 en relais. hass.data[DOMAIN]["akuvoxen"], helper akuvox_voor_deur().
+- Gezichtsserver (v0.10.0): koppelt als tablet met soort server aan een Akuvox deur (koppelcode, eigen RSA sleutel), gebruikt /lijst, /wacht, /status, /open methode gezicht. Toestemming v2 vermeldt de gezichtsserver. Telt niet mee als tablet op de deurkaart. Zie contract/README.md. Volgende: container op Unraid (taak 25).
 - Enkel deurtoegang: andere integraties in HA niet opkuisen of aanpassen.
-- Backups: dagelijkse volledige backup 03:00, enkel lokaal (hassio.local) en NIET versleuteld; automatische backups van HA niet ingesteld. Beslissing Matthias.
+- Backups (18/10): automatische HA back-up dagelijks, versleuteld, 3 kopieën per plek, lokaal + netwerkopslag unraid_backups (share backups op 192.168.1.185, gebruiker btechnics). Eerste kopie op Unraid 18/10 18u27 bevestigd protected (905 MB). Unraid max ca. 3 GB, oudste wordt automatisch gewist. Script ~/BtxBuild/backup-unraid.mjs (info, zet, maak). 13 oude onversleutelde lokale back-ups (12 GB, oude add-on) gewist op 18/10 met akkoord. Add-on Home Assistant Google Drive Backup gestopt en boot manueel (maakte onversleutelde back-ups naar Google Drive). Oude kopieën op Drive wist Matthias zelf.
 - Token voor scripts staat in deur-config.json onder `ha` (cfg.ha.token). Nooit met een fout token proberen: HA blokkeert dan het IP (ip_bans).
 - Work chat: mail met portaallink als `gezicht_ontbreekt` gevuld is (prompt gegeven).
 - Enkel https staat aan sinds 17/10 (app v1.66 op 8443). Nieuwe tablet koppelt via 8443: tablet toont de eerste 16 tekens, Matthias vergelijkt met HA en tikt OK.
