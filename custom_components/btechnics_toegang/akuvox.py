@@ -36,7 +36,7 @@ class AkuvoxFout(Exception):
     pass
 
 
-VELDEN_VERSIE = 2   # verhogen als de velden naar het toestel veranderen: dan zet de sync iedereen opnieuw
+VELDEN_VERSIE = 3   # verhogen als de velden naar het toestel veranderen: dan zet de sync iedereen opnieuw
 
 
 def _pinhash(naam: str, pin: str) -> str:
@@ -169,7 +169,9 @@ class Akuvox:
                 info = eigen.get(pid)
                 h = _pinhash(w["naam"], w["pin"])
                 # zoals de gebruikers die wel werken op de S532: schema Always op relais 1, met activatierecht en groep
-                velden = {"Name": w["naam"], "PrivatePIN": w["pin"], relay_veld: f"{SCHEDULE_ALTIJD}-1;",
+                # het toestel toont ScheduleRelay, maar aanvaardt bij add/set enkel Schedule-Relay (zoals in de API documentatie)
+                velden = {"Name": w["naam"], "PrivatePIN": w["pin"], "Schedule-Relay": f"{SCHEDULE_ALTIJD}-1;",
+                          relay_veld: f"{SCHEDULE_ALTIJD}-1;",
                           "RelayScheduleActivationPermission": "1", "Group": "Default", "WebRelay": "0",
                           "LiftFloorNum": "0"}
                 try:
