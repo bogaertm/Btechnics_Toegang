@@ -19,17 +19,18 @@ from .register import Register, ToegangFout, tijdstip
 
 
 def _akuvox_deur(hass, deur_id: str) -> bool:
-    ak = hass.data.get(DOMAIN, {}).get("akuvox")
-    return bool(ak and ak.aan and ak.deur_id == deur_id)
+    from .akuvox import akuvox_voor_deur
+    return akuvox_voor_deur(hass, deur_id) is not None
 
 
 def _akuvox_ok(hass, deur_id: str) -> bool:
-    ak = hass.data.get(DOMAIN, {}).get("akuvox")
-    return _akuvox_deur(hass, deur_id) and ak.status.get("ok") is not False
+    from .akuvox import akuvox_voor_deur
+    ak = akuvox_voor_deur(hass, deur_id)
+    return bool(ak) and ak.status.get("ok") is not False
 
 
-def _action_url(hass) -> str | None:
-    wid = _reg(hass).data.get("akuvox", {}).get("webhook")
+def _action_url(hass, ak=None) -> str | None:
+    wid = (ak._staat if ak else _reg(hass).data.get("akuvox", {})).get("webhook")  # noqa: SLF001
     if not wid:
         return None
     try:
@@ -428,10 +429,11 @@ def ws_data(hass, connection, msg):
     from .tls import kort
     h = hass.data[DOMAIN].get("https")
     https = {**(https_info(hass) or {}), "kort": kort(h.vingerafdruk) if h else "", "fout": h.fout if h else "uit"}
-    ak = hass.data[DOMAIN].get("akuvox")
-    akuvox = {**ak.status, "deur_id": ak.deur_id, "ip": ak.ip, "action_url": _action_url(hass),
-              "melding_laatst": _reg(hass).data.get("akuvox", {}).get("melding_laatst")} if ak and ak.ip else None
-    connection.send_result(msg["id"], {"deuren": deuren, "tablets": tablets, "log": gebeurtenissen, "versie": d["versie"], "akuvox": akuvox, "https": https,
+    akuvoxen = [{**ak.status, "nr": ak.nr, "deur_id": ak.deur_id, "ip": ak.ip, "action_url": _action_url(hass, ak),
+                 "melding_laatst": ak._staat.get("melding_laatst")}  # noqa: SLF001
+                for ak in hass.data[DOMAIN].get("akuvoxen", []) if ak.ip]
+    akuvox = akuvoxen[0] if akuvoxen else None
+    connection.send_result(msg["id"], {"deuren": deuren, "tablets": tablets, "log": gebeurtenissen, "versie": d["versie"], "akuvox": akuvox, "akuvoxen": akuvoxen, "https": https,
                                        "personen": [{"id": p["id"], "naam": p["naam"], "deuren": p["deuren"], "status": p["status"]}
                                                     for p in d["personen"].values()]})
 

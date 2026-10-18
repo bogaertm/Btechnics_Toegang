@@ -40,14 +40,29 @@ def _pinhash(naam: str, pin: str) -> str:
     return hashlib.sha256(f"{naam}\n{pin}".encode()).hexdigest()[:16]
 
 
+def optie_prefix(nr: int) -> str:
+    """Toestel 1 gebruikt de oude sleutels (akuvox_ip, ...), toestel 2 akuvox2_ip, ..."""
+    return "akuvox_" if nr == 1 else f"akuvox{nr}_"
+
+
+def akuvox_voor_deur(hass: HomeAssistant, deur_id: str):
+    """Het Akuvox toestel (aan) dat deze deur bedient, of None."""
+    from .const import DOMAIN
+    for ak in hass.data.get(DOMAIN, {}).get("akuvoxen", []):
+        if ak.aan and ak.deur_id == deur_id:
+            return ak
+    return None
+
+
 class Akuvox:
-    def __init__(self, hass: HomeAssistant, reg: Register, opties: dict) -> None:
-        self.hass, self.reg = hass, reg
-        self.ip = (opties.get("akuvox_ip") or "").strip()
-        self.gebruiker = opties.get("akuvox_gebruiker") or ""
-        self.wachtwoord = opties.get("akuvox_wachtwoord") or ""
-        self.deur_id = opties.get("akuvox_deur") or ""
-        self.aan = bool(opties.get("akuvox_aan")) and bool(self.ip) and bool(self.deur_id)
+    def __init__(self, hass: HomeAssistant, reg: Register, opties: dict, nr: int = 1) -> None:
+        self.hass, self.reg, self.nr = hass, reg, nr
+        v = optie_prefix(nr)
+        self.ip = (opties.get(f"{v}ip") or "").strip()
+        self.gebruiker = opties.get(f"{v}gebruiker") or ""
+        self.wachtwoord = opties.get(f"{v}wachtwoord") or ""
+        self.deur_id = opties.get(f"{v}deur") or ""
+        self.aan = bool(opties.get(f"{v}aan")) and bool(self.ip) and bool(self.deur_id)
         self.status: dict[str, Any] = {"aan": self.aan, "ok": None, "fout": None, "laatst": None, "eigen": 0,
                                        "toestel": 0, "vreemd_boven_start": 0, "velden": None}
         self._lock = asyncio.Lock()
@@ -56,7 +71,8 @@ class Akuvox:
 
     @property
     def _staat(self) -> dict:
-        return self.reg.data.setdefault("akuvox", {"gebruikers": {}, "volgende": USER_ID_START, "laatste_log": ""})
+        sleutel = "akuvox" if self.nr == 1 else f"akuvox{self.nr}"
+        return self.reg.data.setdefault(sleutel, {"gebruikers": {}, "volgende": USER_ID_START, "laatste_log": ""})
 
     # ------------------------------------------------------------------ http
 

@@ -298,6 +298,9 @@ class BtxToegang extends HTMLElement {
       .map((s) => ({ id: s.entity_id, naam: s.attributes.friendly_name || s.entity_id }))
       .sort((a, b) => a.naam.localeCompare(b.naam, "nl"));
   }
+  _akuvoxDeur(id) {
+    return (this._data.akuvoxen || (this._data.akuvox ? [this._data.akuvox] : [])).some((x) => x.aan && x.deur_id === id);
+  }
   _cameras() {
     return Object.values(this._hass.states).filter((s) => s.entity_id.startsWith("camera."))
       .map((s) => ({ id: s.entity_id, naam: s.attributes.friendly_name || s.entity_id }))
@@ -317,14 +320,14 @@ class BtxToegang extends HTMLElement {
       const rest = c ? Math.max(0, Math.round((c.tot - nu) / 1000)) : 0;
       return `<div class="deur">
         <div class="kop"><b>${esc(d.naam)}</b><span class="acts">
-          <button class="btn" data-a="openen" data-id="${d.id}" ${d.open_entiteit || (this._data.akuvox && this._data.akuvox.aan && this._data.akuvox.deur_id === d.id) ? "" : "disabled title=\"Kies eerst waarmee de deur opent\""}><ha-icon icon="mdi:door-open"></ha-icon> Deur openen</button>
+          <button class="btn" data-a="openen" data-id="${d.id}" ${d.open_entiteit || this._akuvoxDeur(d.id) ? "" : "disabled title=\"Kies eerst waarmee de deur opent\""}><ha-icon icon="mdi:door-open"></ha-icon> Deur openen</button>
           <button class="btn" data-a="deur" data-id="${d.id}"><ha-icon icon="mdi:pencil"></ha-icon> Aanpassen</button></span></div>
         <div class="seg">${MODI.map(([m, l, i]) => `<button class="${d.modus === m ? "on" : ""}" data-a="modus" data-id="${d.id}" data-m="${m}"><ha-icon icon="${i}"></ha-icon>${l}</button>`).join("")}</div>
         <div class="hint" style="margin-top:6px">Modus sinds ${esc(d.modus_sinds ? f.dateTime(new Date(d.modus_sinds)) : "?")}, gezet door ${d.modus_door === "ha" ? "Home Assistant" : esc((tablets.find((t) => t.id === d.modus_door) || {}).naam || "de tablet")}.
-          Opent met: ${!d.open_entiteit && this._data.akuvox && this._data.akuvox.aan && this._data.akuvox.deur_id === d.id ? `<b>relais 1 van de Akuvox S532</b>${d.puls_s ? `, ${d.puls_s} s` : ""}` : d.open_entiteit ? `<b>${esc(this._entNaam(d.open_entiteit))}</b>${/^(switch|input_boolean|light)\./.test(d.open_entiteit) ? (d.puls_s ? `, gaat na ${d.puls_s} s weer uit` : ", blijft aan (pulsduur 0)") : ""}` : `<span class="error">nog niets gekozen</span>`}${d.camera ? ` · Foto: <b>${esc(this._entNaam(d.camera))}</b>` : ""}</div>
-        ${(() => { const a = this._data.akuvox; if (!a || a.deur_id !== d.id) return "";
+          Opent met: ${!d.open_entiteit && this._akuvoxDeur(d.id) ? `<b>relais 1 van de Akuvox</b>${d.puls_s ? `, ${d.puls_s} s` : ""}` : d.open_entiteit ? `<b>${esc(this._entNaam(d.open_entiteit))}</b>${/^(switch|input_boolean|light)\./.test(d.open_entiteit) ? (d.puls_s ? `, gaat na ${d.puls_s} s weer uit` : ", blijft aan (pulsduur 0)") : ""}` : `<span class="error">nog niets gekozen</span>`}${d.camera ? ` · Foto: <b>${esc(this._entNaam(d.camera))}</b>` : ""}</div>
+        ${(() => { const a = (this._data.akuvoxen || (this._data.akuvox ? [this._data.akuvox] : [])).find((x) => x.deur_id === d.id); if (!a) return "";
           const st = !a.aan ? "sync staat uit" : a.ok === null ? "nog niet gesynct" : a.ok ? "sync in orde" : `fout: ${esc(a.fout || "?")}`;
-          return `<div class="sub">Akuvox S532 (${esc(a.ip)})</div><div class="hint"><span class="dot ${a.ok ? "on" : "off"}"></span> ${st}${a.aan ? ` · ${a.eigen} personen van HA op het toestel, ${a.toestel} gebruikers in totaal${a.vreemd_boven_start ? `, ${a.vreemd_boven_start} onbekende vanaf 700001 (blijven staan)` : ""}${a.laatst ? `, laatst ${esc(f.compact(new Date(a.laatst)))}` : ""}` : ""}</div>
+          return `<div class="sub">Akuvox ${a.nr ? `toestel ${a.nr} ` : ""}(${esc(a.ip)})</div><div class="hint"><span class="dot ${a.ok ? "on" : "off"}"></span> ${st}${a.aan ? ` · ${a.eigen} personen van HA op het toestel, ${a.toestel} gebruikers in totaal${a.vreemd_boven_start ? `, ${a.vreemd_boven_start} onbekende vanaf 700001 (blijven staan)` : ""}${a.laatst ? `, laatst ${esc(f.compact(new Date(a.laatst)))}` : ""}` : ""}</div>
           ${a.aan ? `<div class="hint">${a.melding_laatst ? `Directe melding (Action URL) werkt, laatst ${esc(f.compact(new Date(a.melding_laatst)))}` : `<span class="error">Nog geen directe melding: zet op de S532 bij Action URL</span> <code style="user-select:all">${esc(a.action_url || "")}</code>`}</div>` : ""}`; })()}
         <div class="sub">Tablets</div>
         ${tb.length ? tb.map((t) => `<div class="tab"><span class="dot ${t.online ? "on" : "off"}" title="${t.online ? "Online" : "Offline"}"></span>

@@ -363,12 +363,22 @@
     "akuvox_test": {
       "name": "Akuvox nakijken",
       "description": "Leest wat er op de S532 staat, zonder iets te wijzigen.",
-      "fields": {}
+      "fields": {
+        "toestel": {
+          "name": "Toestel",
+          "description": "1 of 2, leeg is alle toestellen"
+        }
+      }
     },
     "akuvox_sync": {
       "name": "Akuvox nu syncen",
       "description": "Zet de eigen gebruikers nu op de S532 (enkel UserID vanaf 700001).",
-      "fields": {}
+      "fields": {
+        "toestel": {
+          "name": "Toestel",
+          "description": "1 of 2, leeg is alle toestellen"
+        }
+      }
     },
     "testdeur_klaarzetten": {
       "name": "Testdeur klaarzetten",
@@ -399,15 +409,20 @@
     "step": {
       "init": {
         "title": "Instellingen",
-        "description": "Sync naar de Akuvox S532 via de lokale HTTP API (zet ze aan op het toestel: Instellingen, HTTP API, Basic). Enkel eigen gebruikers vanaf UserID 700001; gebruikers van SmartPlus blijven onaangeroerd. Wachtwoord: {wachtwoord} (leeg laten is ongewijzigd).",
+        "description": "Tot 2 Akuvox toestellen via de lokale HTTP API (zet ze aan op het toestel: Setting, HTTP API, Basic). Enkel eigen gebruikers vanaf UserID 700001; gebruikers van SmartPlus blijven onaangeroerd. Wachtwoord toestel 1: {wachtwoord}, toestel 2: {wachtwoord2} (leeg laten is ongewijzigd).",
         "data": {
-          "akuvox_aan": "Sync aan",
-          "akuvox_ip": "IP adres",
-          "akuvox_gebruiker": "Gebruiker HTTP API",
-          "akuvox_wachtwoord": "Wachtwoord HTTP API",
-          "akuvox_deur": "Deur van de S532 in HA",
+          "akuvox_aan": "Toestel 1: sync aan",
+          "akuvox_ip": "Toestel 1: IP adres",
+          "akuvox_gebruiker": "Toestel 1: gebruiker HTTP API",
+          "akuvox_wachtwoord": "Toestel 1: wachtwoord HTTP API",
+          "akuvox_deur": "Toestel 1: deur in HA",
           "https_poort": "Https poort voor de tablets",
-          "enkel_https": "Enkel https voor tablets (na de overgang)"
+          "enkel_https": "Enkel https voor tablets (na de overgang)",
+          "akuvox2_aan": "Toestel 2: sync aan",
+          "akuvox2_ip": "Toestel 2: IP adres",
+          "akuvox2_gebruiker": "Toestel 2: gebruiker HTTP API",
+          "akuvox2_wachtwoord": "Toestel 2: wachtwoord HTTP API",
+          "akuvox2_deur": "Toestel 2: deur in HA"
         }
       }
     },

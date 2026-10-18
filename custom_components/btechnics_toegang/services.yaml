@@ -218,10 +218,24 @@ persoon_verwijderen:
       selector:
         text: {}
 overzicht: {}
-akuvox_test: {}
+akuvox_test:
+  fields:
+    toestel:
+      required: false
+      selector:
+        number:
+          min: 1
+          max: 2
 testdeur_klaarzetten: {}
 testdeur_opruimen: {}
-akuvox_sync: {}
+akuvox_sync:
+  fields:
+    toestel:
+      required: false
+      selector:
+        number:
+          min: 1
+          max: 2
 werk:
   fields:
     actie:
