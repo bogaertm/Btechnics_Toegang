@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import hmac
 import secrets
 import time
 from datetime import date, datetime, timedelta
@@ -712,8 +713,9 @@ class Register:
             self.gewijzigd()
         return nieuw
 
-    def gezicht_zetten(self, p: dict, huidige_pin: str, pakket: dict) -> dict:
-        self._portaal_controle(p, huidige_pin)
+    def gezicht_zetten(self, p: dict, huidige_pin: str, pakket: dict, vertrouwd: bool = False) -> dict:
+        if not vertrouwd:
+            self._portaal_controle(p, huidige_pin)
         if p["status"] == "retired":
             raise ToegangFout("Je toegang is stopgezet.")
         try:
@@ -912,9 +914,60 @@ class Register:
         self.audit(wie, "uitnodiging ingetrokken", u["naam"] or "nieuwe medewerker", u["deuren"])
         self.gewijzigd(lijst_veranderd=False)
 
+    # ------------------------------------------------------------------ link vanuit Btechnics Work (zonder code)
+
+    WERK_LINK_MAX = 600      # een link van Work is hoogstens 10 minuten geldig
+    WERK_SESSIE = 1800       # daarna 30 minuten werken in het portaal
+
+    def werk_geheim_zetten(self, wie: str, geheim: str) -> None:
+        """Gedeeld geheim met Work (komt via het IOT kanaal, verschijnt nergens in beeld)."""
+        if not isinstance(geheim, str) or len(geheim) < 32 or len(geheim) > 128:
+            raise ToegangFout("geheim moet 32 tot 128 tekens zijn")
+        self.data["werk_geheim"] = geheim
+        self.audit(wie, "aangepast", "Work koppeling", soort="systeem", detail="geheim voor links vanuit Work gezet")
+        self.gewijzigd(lijst_veranderd=False)
+
+    def werk_sessie(self, werk_id: str, t: str, s: str) -> str:
+        """Controleert een link van Work (HMAC-SHA256 van "werk_id.t" met het gedeelde geheim) en geeft een
+        portaalsessie terug waarin de medewerker zonder huidige code kan wijzigen. Elke link werkt een keer."""
+        geheim = self.data.get("werk_geheim")
+        if not geheim:
+            raise ToegangFout("De koppeling met Work is nog niet ingesteld.")
+        try:
+            tot = int(t)
+        except (TypeError, ValueError) as e:
+            raise ToegangFout("Deze link is niet geldig.") from e
+        nu = time.time()
+        verwacht = hmac.new(geheim.encode(), f"{werk_id}.{tot}".encode(), hashlib.sha256).hexdigest()
+        if not s or not secrets.compare_digest(verwacht, str(s).lower()):
+            raise ToegangFout("Deze link is niet geldig.")
+        if not nu <= tot <= nu + self.WERK_LINK_MAX:
+            raise ToegangFout("Deze link is verlopen. Open hem opnieuw vanuit Work.")
+        gebruikt = self.__dict__.setdefault("_werk_gebruikt", {})
+        for k in [k for k, v in gebruikt.items() if v < nu]:
+            del gebruikt[k]
+        if s in gebruikt:
+            raise ToegangFout("Deze link werd al gebruikt. Open hem opnieuw vanuit Work.")
+        p = next((x for x in self.data["personen"].values() if x.get("werk_id") == werk_id and x["status"] != "retired"), None)
+        if not p:
+            raise ToegangFout("Je hebt nog geen toegang. Vraag het aan je verantwoordelijke.")
+        gebruikt[s] = tot
+        token = secrets.token_urlsafe(24)
+        self.__dict__.setdefault("_sessies", {})[token_hash(token)] = {"pid": p["id"], "tot": nu + self.WERK_SESSIE}
+        p["fouten"] = 0
+        return token
+
+    def portaal_vertrouwd(self, token: str) -> bool:
+        """True als de link van een sessie uit Work komt: dan geen huidige code nodig."""
+        x = self.__dict__.get("_sessies", {}).get(token_hash(token))
+        return bool(x and x["tot"] > time.time())
+
     def portaal_zoek(self, token: str) -> tuple[str, dict] | None:
         """('uitnodiging', u) of ('persoon', p) voor een portaallink, anders None."""
         h = token_hash(token)
+        sessie = self.__dict__.get("_sessies", {}).get(h)
+        if sessie and sessie["tot"] > time.time() and sessie["pid"] in self.data["personen"]:
+            return "persoon", self.data["personen"][sessie["pid"]]
         for u in self.data["uitnodigingen"].values():
             if secrets.compare_digest(u["hash"], h):
                 return "uitnodiging", u
@@ -969,9 +1022,10 @@ class Register:
         return p, nieuw
 
     def portaal_wijzigen(self, p: dict, huidige_pin: str, *, telefoon: str | None = None, email: str | None = None,
-                         nieuwe_pin: str | None = None) -> dict:
-        """Wijziging vanuit het eigen portaal: altijd eerst de huidige code (een doorgestuurde link volstaat niet)."""
-        self._portaal_controle(p, huidige_pin)
+                         nieuwe_pin: str | None = None, vertrouwd: bool = False) -> dict:
+        """Wijziging vanuit het eigen portaal: met de huidige code, of zonder als de medewerker via Work kwam."""
+        if not vertrouwd:
+            self._portaal_controle(p, huidige_pin)
         wie = f"{p['naam']} (portaal)"
         if nieuwe_pin:
             nieuw = self.controleer_pin(nieuwe_pin, behalve=p["id"], streng=True)

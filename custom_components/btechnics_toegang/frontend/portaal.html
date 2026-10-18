@@ -188,11 +188,13 @@ function gezichtKaart() {
   return `<div class="kaart">${kop}
     <div class="rij"><span>Sinds</span><span>${esc(datum(g.sinds))}</span></div>
     <div class="rij"><span>Deuren</span><span>${g.tablets.map((t) => `<span class="chip">${esc(t.deur)}${t.heeft ? "" : " (nog niet)"}</span>`).join("")}</span></div>
-    ${mist.length ? `<div class="waarschuwing">Op ${mist.map((t) => esc(t.deur)).join(", ")} werkt het nog niet. Scan opnieuw om het daar ook aan te zetten.</div>` : ""}
+    ${mist.length ? (g.tablets.some((t) => t.soort === "server" && t.heeft)
+      ? `<div class="uitleg">Op ${mist.map((t) => esc(t.deur)).join(", ")} wordt het binnen enkele minuten vanzelf klaargezet.</div>`
+      : `<div class="waarschuwing">Op ${mist.map((t) => esc(t.deur)).join(", ")} werkt het nog niet. Scan opnieuw om het daar ook aan te zetten.</div>`) : ""}
     <button class="knop ${mist.length ? "" : "zacht"}" id="gz-start">Opnieuw scannen</button>
     <details style="margin-top:12px"><summary>Uitzetten en wissen</summary>
       <p>De afdruk wordt gewist, ook op de tablets en de gezichtsserver. Je code blijft werken.</p>
-      <label for="gz-pin">Je huidige code</label><input id="gz-pin" class="pin" type="password" inputmode="numeric" autocomplete="current-password" maxlength="${INFO.pin.max}">
+      ${INFO.vertrouwd ? "" : `<label for="gz-pin">Je huidige code</label><input id="gz-pin" class="pin" type="password" inputmode="numeric" autocomplete="current-password" maxlength="${INFO.pin.max}">`}
       <div id="gz-m" class="melding"></div>
       <button class="knop zacht" id="gz-wis">Gezichtsherkenning uitzetten</button></details></div>`;
 }
@@ -201,8 +203,8 @@ function koppelGezicht() {
   if (st) st.addEventListener("click", () => toonScan());
   const wis = $("#gz-wis");
   if (wis) wis.addEventListener("click", async () => {
-    const pin = $("#gz-pin").value;
-    if (!pin) return melding($("#gz-m"), "Vul je huidige code in.");
+    const pin = INFO.vertrouwd ? "" : $("#gz-pin").value;
+    if (!INFO.vertrouwd && !pin) return melding($("#gz-m"), "Vul je huidige code in.");
     wis.disabled = true;
     try { await post("/gezicht", { wissen: true, huidige_pin: pin }); await laad(); }
     catch (e) { melding($("#gz-m"), e.message); wis.disabled = false; }
@@ -229,17 +231,17 @@ function toonScan() {
   $("#main").innerHTML = `<div class="kaart" id="stap1"><h2><span class="nr">1</span>Toestemming</h2>
       <div class="toestemming">${esc(g.toestemming.tekst)}</div>
       <label class="vink"><input type="checkbox" id="gz-ok"> Ik geef deze toestemming (versie ${esc(g.toestemming.versie)}).</label>
-      <label for="gz-pin">Je huidige code</label><input id="gz-pin" class="pin" type="password" inputmode="numeric" autocomplete="current-password" maxlength="${INFO.pin.max}">
+      ${INFO.vertrouwd ? "" : `<label for="gz-pin">Je huidige code</label><input id="gz-pin" class="pin" type="password" inputmode="numeric" autocomplete="current-password" maxlength="${INFO.pin.max}">`}
       <div id="gz-m" class="melding"></div>
       <button class="knop" id="gz-cam">Camera starten</button>
       <button class="knop zacht" id="gz-terug">Terug</button></div>`;
-  $("#gz-pin").addEventListener("input", (e) => { e.target.value = e.target.value.replace(/\D/g, ""); });
+  if ($("#gz-pin")) $("#gz-pin").addEventListener("input", (e) => { e.target.value = e.target.value.replace(/\D/g, ""); });
   $("#gz-terug").addEventListener("click", () => laad());
   $("#gz-cam").addEventListener("click", async () => {
     const m = $("#gz-m");
     if (!$("#gz-ok").checked) return melding(m, "Vink aan dat je de toestemming geeft.");
-    const pin = $("#gz-pin").value;
-    if (pin.length < INFO.pin.min) return melding(m, "Vul je huidige code in.");
+    const pin = INFO.vertrouwd ? "" : $("#gz-pin").value;
+    if (!INFO.vertrouwd && pin.length < INFO.pin.min) return melding(m, "Vul je huidige code in.");
     if (!window.isSecureContext || !navigator.mediaDevices) return melding(m, "De camera werkt enkel via de beveiligde link (https). Open de link uit je bericht opnieuw.");
     const b = $("#gz-cam"); b.disabled = true; b.textContent = "Even geduld...";
     let gz;
@@ -501,14 +503,14 @@ function toonPersoon() {
       <span>${esc(r.door)} <span class="dot ${r.opened ? "" : "retired"}" style="${r.opened ? "" : "background:#c62828"}"></span></span></div>`).join("")}</div>` : ""}
     ${gezichtKaart()}
     <form id="f" novalidate class="kaart"><h2>Gegevens aanpassen</h2>
-      <p class="uitleg">Vul enkel in wat je wil wijzigen. Ter controle vragen we altijd je huidige code.</p>
+      <p class="uitleg">Vul enkel in wat je wil wijzigen.${i.vertrouwd ? "" : " Ter controle vragen we je huidige code."}</p>
       <label for="tel">Gsm-nummer</label><input id="tel" type="tel" autocomplete="tel" value="${esc(i.telefoon)}">
       <label for="mail">E-mailadres</label><input id="mail" type="email" autocomplete="email" value="${esc(i.email)}">
       <label>Nieuwe foto</label>${fotoBlok("ft", false)}
       <label for="p1">Nieuwe code (optioneel)</label>
       <div class="twee"><input id="p1" class="pin" type="password" inputmode="numeric" autocomplete="new-password" maxlength="${i.pin.max}" placeholder="nieuw">
         <input id="p2" class="pin" type="password" inputmode="numeric" autocomplete="new-password" maxlength="${i.pin.max}" placeholder="nog eens"></div>
-      <label for="huidig">Je huidige code</label><input id="huidig" class="pin" type="password" inputmode="numeric" autocomplete="current-password" maxlength="${i.pin.max}">
+      ${i.vertrouwd ? "" : `<label for="huidig">Je huidige code</label><input id="huidig" class="pin" type="password" inputmode="numeric" autocomplete="current-password" maxlength="${i.pin.max}">`}
       <div id="m" class="melding"></div>
       <button class="knop" id="bewaar" type="submit">Bewaren</button></form>
     <div class="kaart">${privacy()}</div>`;
@@ -516,11 +518,11 @@ function toonPersoon() {
   FOTO = null;
   koppelFoto("ft", m);
   koppelGezicht();
-  ["p1", "p2", "huidig"].forEach((id) => $("#" + id).addEventListener("input", (e) => { e.target.value = e.target.value.replace(/\D/g, ""); }));
+  ["p1", "p2", "huidig"].filter((id) => $("#" + id)).forEach((id) => $("#" + id).addEventListener("input", (e) => { e.target.value = e.target.value.replace(/\D/g, ""); }));
   $("#f").addEventListener("submit", async (ev) => {
     ev.preventDefault();
-    const d = { huidige_pin: $("#huidig").value, telefoon: $("#tel").value.trim(), email: $("#mail").value.trim() };
-    if (!d.huidige_pin) return melding(m, "Vul je huidige code in.");
+    const d = { huidige_pin: i.vertrouwd ? "" : $("#huidig").value, telefoon: $("#tel").value.trim(), email: $("#mail").value.trim() };
+    if (!i.vertrouwd && !d.huidige_pin) return melding(m, "Vul je huidige code in.");
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(d.email)) return melding(m, "Vul een geldig e-mailadres in.");
     const p1 = $("#p1").value, p2 = $("#p2").value;
     if (p1 || p2) {

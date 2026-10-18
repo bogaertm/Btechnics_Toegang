@@ -144,7 +144,7 @@ class PortaalInfo(_PortaalView):
                                "schema": obj.get("schema") or [], "verloopt": obj["verloopt"]})
         p = obj
         recent = await hass.async_add_executor_job(hass.data[DOMAIN]["toegang"].archief.voor_persoon, p["id"], 10)
-        return self._antw({**basis, "soort": "persoon", "voornaam": p.get("voornaam", ""), "achternaam": p.get("achternaam", ""),
+        return self._antw({**basis, "soort": "persoon", "vertrouwd": reg.portaal_vertrouwd(token), "voornaam": p.get("voornaam", ""), "achternaam": p.get("achternaam", ""),
                            "naam": p["naam"], "telefoon": p.get("telefoon", ""), "email": p.get("email", ""),
                            "deuren": _deuren(reg, p["deuren"]), "status": p["status"], "until": p.get("until"),
                            "valid_from": p.get("valid_from"), "valid_until": p.get("valid_until"), "schema": p.get("schema") or [],
@@ -178,10 +178,11 @@ class PortaalGezicht(_PortaalView):
         p = gevonden[1]
         d = await self._json(request)
         try:
+            vertrouwd = reg.portaal_vertrouwd(token)
             if d.get("wissen"):
-                reg.gezicht_wissen(f"{p['naam']} (portaal)", p["id"], str(d.get("huidige_pin") or ""))
+                reg.gezicht_wissen(f"{p['naam']} (portaal)", p["id"], None if vertrouwd else str(d.get("huidige_pin") or ""))
             else:
-                reg.gezicht_zetten(p, str(d.get("huidige_pin") or ""), d)
+                reg.gezicht_zetten(p, str(d.get("huidige_pin") or ""), d, vertrouwd=vertrouwd)
         except ToegangFout as e:
             return self._antw({"fout": str(e)}, HTTPStatus.BAD_REQUEST)
         if not d.get("wissen"):
@@ -244,13 +245,32 @@ class PortaalWijzig(_PortaalView):
             foto = _foto_bytes(d["foto"]) if d.get("foto") else None
             reg.portaal_wijzigen(p, str(d.get("huidige_pin") or ""),
                                  telefoon=str(d["telefoon"]).strip()[:80] if d.get("telefoon") is not None else None,
-                                 email=str(email).strip()[:80] if email is not None else None, nieuwe_pin=nieuwe_pin)
+                                 email=str(email).strip()[:80] if email is not None else None, nieuwe_pin=nieuwe_pin,
+                                 vertrouwd=reg.portaal_vertrouwd(token))
         except ToegangFout as e:
             return self._antw({"fout": str(e)}, HTTPStatus.BAD_REQUEST)
         if foto:
             await hass.async_add_executor_job(_schrijf, foto_pad(hass, p["id"]), foto)
             reg.foto_gezet(f"{p['naam']} (portaal)", p["id"])
         return self._antw({"ok": True})
+
+
+class PortaalWerk(_PortaalView):
+    """Link vanuit Btechnics Work: ?w=werk_id&t=vervaltijd&s=hmac. Leidt door naar een portaalsessie zonder code."""
+    url = API + "/werklink"
+    name = f"api:{DOMAIN}:werklink"
+
+    async def get(self, request: web.Request) -> web.Response:
+        reg = self._reg(request)
+        q = request.query
+        try:
+            token = reg.werk_sessie(str(q.get("w") or "")[:40], str(q.get("t") or ""), str(q.get("s") or "")[:128])
+        except ToegangFout as e:
+            fout = str(e).replace("&", "&amp;").replace("<", "&lt;")
+            return web.Response(text=f"<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'>"
+                                     f"<body style='font-family:sans-serif;padding:24px'><h2>Toegang</h2><p>{fout}</p></body>",
+                                content_type="text/html", status=HTTPStatus.FORBIDDEN, headers=KOPPEN)
+        raise web.HTTPFound(f"{API}/portaal/{token}", headers=KOPPEN)
 
 
 class PortaalFoto(_PortaalView):
@@ -288,7 +308,7 @@ class BeheerFoto(HomeAssistantView):
 
 
 def registreer_portaal(hass) -> None:
-    for v in (PortaalPagina, DeelPagina, PortaalInfo, PortaalGezicht, PortaalAanmelden, PortaalWijzig, PortaalFoto, BeheerFoto):
+    for v in (PortaalWerk, PortaalPagina, DeelPagina, PortaalInfo, PortaalGezicht, PortaalAanmelden, PortaalWijzig, PortaalFoto, BeheerFoto):
         hass.http.register_view(v())
 
 
