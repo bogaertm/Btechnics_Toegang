@@ -18,7 +18,7 @@ Een container per deur. Beeld: `ghcr.io/bogaertm/btx-gezichtsserver`. Map `/data
 | OOG_MIN | 45 | pixels tussen de irissen (dichtbij) |
 | HOEK_MAX | 15 | graden draai en kanteling |
 | STIL_S | 2 | seconden stil en herkend |
-| FPS / THREADS | 6 / 2 | belasting |
+| FPS / THREADS | 8 / 2 | belasting |
 
 Opnieuw koppelen: `staat.json` in `/data` wissen en KOPPELCODE zetten. De sleutel (`sleutel.pem`) blijft dan dezelfde.
 Er worden geen beelden bewaard; enkel als HA om een foto vraagt (openen op afstand) gaat er een beeld naar HA.
