@@ -363,12 +363,22 @@
     "akuvox_test": {
       "name": "Check Akuvox",
       "description": "Reads the S532 without changing anything.",
-      "fields": {}
+      "fields": {
+        "toestel": {
+          "name": "Device",
+          "description": "1 or 2, empty is all"
+        }
+      }
     },
     "akuvox_sync": {
       "name": "Sync Akuvox now",
       "description": "Syncs own users to the S532 now (UserID 700001 and up only).",
-      "fields": {}
+      "fields": {
+        "toestel": {
+          "name": "Device",
+          "description": "1 or 2, empty is all"
+        }
+      }
     },
     "testdeur_klaarzetten": {
       "name": "Prepare test door",
@@ -399,15 +409,20 @@
     "step": {
       "init": {
         "title": "Settings",
-        "description": "Sync to the Akuvox S532 via its local HTTP API. Only own users from UserID 700001; SmartPlus users are never touched. Password: {wachtwoord} (leave empty to keep).",
+        "description": "Up to 2 Akuvox devices via the local HTTP API. Only own users from UserID 700001. Password device 1: {wachtwoord}, device 2: {wachtwoord2} (leave empty to keep).",
         "data": {
-          "akuvox_aan": "Sync on",
-          "akuvox_ip": "IP address",
-          "akuvox_gebruiker": "HTTP API user",
-          "akuvox_wachtwoord": "HTTP API password",
-          "akuvox_deur": "Door of the S532 in HA",
+          "akuvox_aan": "Device 1: sync on",
+          "akuvox_ip": "Device 1: IP address",
+          "akuvox_gebruiker": "Device 1: HTTP API user",
+          "akuvox_wachtwoord": "Device 1: HTTP API password",
+          "akuvox_deur": "Device 1: door in HA",
           "https_poort": "HTTPS port for tablets",
-          "enkel_https": "HTTPS only for tablets"
+          "enkel_https": "HTTPS only for tablets",
+          "akuvox2_aan": "Device 2: sync on",
+          "akuvox2_ip": "Device 2: IP address",
+          "akuvox2_gebruiker": "Device 2: HTTP API user",
+          "akuvox2_wachtwoord": "Device 2: HTTP API password",
+          "akuvox2_deur": "Device 2: door in HA"
         }
       }
     },

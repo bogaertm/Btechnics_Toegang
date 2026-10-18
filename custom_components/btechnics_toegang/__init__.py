@@ -253,21 +253,30 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         from . import testset
         return testset.opruimen(reg_())
 
+    def _aks(call):
+        nr = call.data.get("toestel")
+        lijst = [a for a in _data(hass).get("akuvoxen", []) if a.ip and (not nr or a.nr == nr)]
+        if not lijst:
+            raise HomeAssistantError("Akuvox is niet ingesteld (Instellingen, Btechnics Toegang, Configureren)")
+        return lijst
+
     async def akuvox_test(call: ServiceCall) -> ServiceResponse:
         from .akuvox import AkuvoxFout
-        ak = _data(hass).get("akuvox")
-        if not ak or not ak.ip:
-            raise HomeAssistantError("Akuvox is niet ingesteld (Instellingen, Btechnics Toegang, Configureren)")
-        try:
-            return {"status": ak.status, "toestel": await ak.async_test()}
-        except AkuvoxFout as e:
-            raise HomeAssistantError(str(e)) from e
+        alle = []
+        for ak in _aks(call):
+            try:
+                alle.append({"nr": ak.nr, "status": ak.status, "toestel": await ak.async_test()})
+            except AkuvoxFout as e:
+                alle.append({"nr": ak.nr, "status": ak.status, "fout": str(e)})
+        if len(alle) == 1 and "fout" in alle[0]:
+            raise HomeAssistantError(alle[0]["fout"])
+        return {**alle[0], "alle": alle}
 
     async def akuvox_sync(call: ServiceCall) -> ServiceResponse:
-        ak = _data(hass).get("akuvox")
-        if not ak or not ak.aan:
+        alle = [{"nr": ak.nr, "verslag": await ak.async_sync(), "status": ak.status} for ak in _aks(call) if ak.aan]
+        if not alle:
             raise HomeAssistantError("Akuvox sync staat uit")
-        return {"verslag": await ak.async_sync(), "status": ak.status}
+        return {**alle[0], "alle": alle}
 
     def dienst(naam, fn, schema, antw=SupportsResponse.NONE):
         async_register_admin_service(hass, DOMAIN, naam, fn, schema, antw)
@@ -294,10 +303,10 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     for naam in ("deblokkeren", "uit_dienst", "herstellen", "verwijderen"):
         dienst(f"persoon_{naam}", _statusdienst(naam), persoon)
     dienst("overzicht", overzicht, vol.Schema({}), SupportsResponse.ONLY)
-    dienst("akuvox_test", akuvox_test, vol.Schema({}), SupportsResponse.ONLY)
+    dienst("akuvox_test", akuvox_test, vol.Schema({vol.Optional("toestel"): vol.In([1, 2])}), SupportsResponse.ONLY)
     dienst("testdeur_klaarzetten", testdeur_klaarzetten, vol.Schema({}), SupportsResponse.ONLY)
     dienst("testdeur_opruimen", testdeur_opruimen, vol.Schema({}), SupportsResponse.ONLY)
-    dienst("akuvox_sync", akuvox_sync, vol.Schema({}), SupportsResponse.ONLY)
+    dienst("akuvox_sync", akuvox_sync, vol.Schema({vol.Optional("toestel"): vol.In([1, 2])}), SupportsResponse.ONLY)
     # koppeling met Btechnics Work via Btechnics IOT (zie werk.py)
     dienst("werk", werk, vol.Schema({vol.Required("actie"): cv.string, vol.Optional("velden"): dict,
                                      vol.Optional("door"): cv.string}), SupportsResponse.ONLY)
@@ -381,81 +390,97 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     reg, tg = data["register"], data["toegang"]
     reg.bij_nieuwe_tablet = lambda: hass.config_entries.async_schedule_reload(entry.entry_id)
     from .akuvox import Akuvox, AkuvoxFout
-    ak = data["akuvox"] = Akuvox(hass, reg, dict(entry.options))
+    from homeassistant.components import webhook as ha_webhook
+    # tot 2 Akuvox toestellen, elk met eigen deur, relais, camera, Action URL en eigen gebruikers vanaf 700001
+    aks = data["akuvoxen"] = [Akuvox(hass, reg, dict(entry.options), nr) for nr in (1, 2)]
+    data["akuvox"] = aks[0]
     entry.async_on_unload(entry.add_update_listener(_opties_gewijzigd))
 
     async def _akuvox(_now=None):
-        if not ak.aan:
-            return
-        await ak.async_sync()
+        for ak in aks:
+            if ak.aan:
+                try:
+                    await ak.async_sync()
+                except Exception:  # noqa: BLE001
+                    _LOGGER.exception("Akuvox %s sync mislukt", ak.nr)
 
-    bezig = {"log": False, "nog": False}
+    def _maak_log(ak):
+        bezig = {"log": False, "nog": False}
+
+        async def _doe():
+            try:
+                rijen = await ak.async_deurlog()
+            except AkuvoxFout as e:
+                _LOGGER.debug("Akuvox %s deurlog: %s", ak.nr, e)
+                return
+            for r in rijen[-3:]:
+                r["foto"] = await tg.async_foto(r["door_id"], r["uid"], r["ts"])
+            if rijen:
+                nieuw = await hass.async_add_executor_job(tg.archief.toevoegen, rijen)
+                if nieuw:
+                    await tg._na_toevoegen(ak.deur_id, [(r, {"deur_id": r["door_id"], "deur": r["door"], "methode": r["method"],
+                                                             "persoon_id": r["persoon_id"] or None,
+                                                             "soort": "toegang" if r["opened"] else "geweigerd",
+                                                             "tekst": r["tekst"], "uid": r["uid"]}) for r in rijen[-nieuw:]])
+
+        async def _log(_now=None):
+            """Deurlog ophalen: elke 5 s, en meteen als het toestel een poging meldt via de Action URL."""
+            if not ak.aan:
+                return
+            if bezig["log"]:
+                bezig["nog"] = True
+                return
+            bezig["log"] = True
+            try:
+                while True:
+                    bezig["nog"] = False
+                    await _doe()
+                    if not bezig["nog"]:
+                        break
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception("Akuvox %s deurlog mislukt", ak.nr)
+            finally:
+                bezig["log"] = False
+        return _log
+
+    logs = []
+    for ak in aks:
+        _log = _maak_log(ak)
+        logs.append(_log)
+        # Action URL op het toestel: http://<HA>:8123/api/webhook/<id> bij elke poging (code, badge)
+        staat = ak._staat  # noqa: SLF001
+        if not staat.get("webhook"):
+            staat["webhook"] = "btx_akuvox_" + ("" if ak.nr == 1 else f"{ak.nr}_") + secrets.token_hex(12)
+            reg._bewaar()  # noqa: SLF001
+
+        async def _melding(hass_, webhook_id, request, ak=ak, staat=staat, _log=_log):
+            if ak.aan:
+                staat["melding_laatst"] = dt_util.utcnow().isoformat()
+                reg._bewaar()  # noqa: SLF001
+                await tg.async_vooraf_beeld(ak.deur_id)
+                hass.async_create_task(_log())
+            return None
+
+        ha_webhook.async_register(hass, DOMAIN, f"Btechnics Toegang Akuvox {ak.nr}", staat["webhook"], _melding,
+                                  local_only=True, allowed_methods=["GET", "POST"])
+        entry.async_on_unload(lambda wid=staat["webhook"]: ha_webhook.async_unregister(hass, wid))
 
     async def _akuvox_log(_now=None):
-        """Deurlog van de S532 ophalen: elke 5 s, en meteen als de S532 een poging meldt via de Action URL."""
-        if not ak.aan:
-            return
-        if bezig["log"]:
-            bezig["nog"] = True
-            return
-        bezig["log"] = True
-        try:
-            while True:
-                bezig["nog"] = False
-                await _akuvox_log_doe()
-                if not bezig["nog"]:
-                    break
-        except Exception:  # noqa: BLE001
-            _LOGGER.exception("Akuvox deurlog mislukt")
-        finally:
-            bezig["log"] = False
-
-    # Action URL op de S532: http://<HA>:8123/api/webhook/<id> bij elke poging (code, badge, relais)
-    from homeassistant.components import webhook as ha_webhook
-    staat = reg.data.setdefault("akuvox", {"gebruikers": {}, "volgende": 700001, "laatste_log": ""})
-    if not staat.get("webhook"):
-        staat["webhook"] = "btx_akuvox_" + secrets.token_hex(12)
-        reg._bewaar()  # noqa: SLF001
-
-    async def _akuvox_melding(hass_, webhook_id, request):
-        if ak.aan:
-            staat["melding_laatst"] = dt_util.utcnow().isoformat()
-            reg._bewaar()  # noqa: SLF001
-            await tg.async_vooraf_beeld(ak.deur_id)
-            hass.async_create_task(_akuvox_log())
-        return None
-
-    ha_webhook.async_register(hass, DOMAIN, "Btechnics Toegang Akuvox", staat["webhook"], _akuvox_melding,
-                              local_only=True, allowed_methods=["GET", "POST"])
-    entry.async_on_unload(lambda: ha_webhook.async_unregister(hass, staat["webhook"]))
-
-    async def _akuvox_log_doe():
-        try:
-            rijen = await ak.async_deurlog()
-        except AkuvoxFout as e:
-            _LOGGER.debug("Akuvox deurlog: %s", e)
-            return
-        for r in rijen[-3:]:
-            r["foto"] = await tg.async_foto(r["door_id"], r["uid"], r["ts"])
-        if rijen:
-            nieuw = await hass.async_add_executor_job(tg.archief.toevoegen, rijen)
-            if nieuw:
-                await tg._na_toevoegen(ak.deur_id, [(r, {"deur_id": r["door_id"], "deur": r["door"], "methode": r["method"],
-                                                         "persoon_id": r["persoon_id"] or None, "soort": "toegang" if r["opened"] else "geweigerd",
-                                                         "tekst": r["tekst"], "uid": r["uid"]}) for r in rijen[-nieuw:]])
+        for _log in logs:
+            await _log()
 
     uitgesteld = {"h": None}
 
     def _na_wijziging():
         _toestellen_opruimen(hass, entry)
-        if not ak.aan:
+        if not any(ak.aan for ak in aks):
             return
         if uitgesteld["h"]:
             uitgesteld["h"]()
 
         async def _doe(_now):
             uitgesteld["h"] = None
-            await ak.async_sync()
+            await _akuvox()
         uitgesteld["h"] = async_call_later(hass, 3, _doe)
     reg.bij_gewijzigd = _na_wijziging
 
@@ -466,10 +491,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 _LOGGER.info("Planner: %s", "; ".join(gedaan))
         except Exception:  # noqa: BLE001
             _LOGGER.exception("Planner mislukt")
-        try:
-            await _akuvox()
-        except Exception:  # noqa: BLE001
-            _LOGGER.exception("Akuvox sync mislukt")
+        await _akuvox()
 
     async def _opruimen(_now=None):
         n = await hass.async_add_executor_job(tg.archief.prune, ARCHIEF_DAGEN)

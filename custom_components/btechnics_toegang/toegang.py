@@ -213,8 +213,9 @@ class Toegang:
 
     async def async_deur_openen(self, deur: dict) -> None:
         ent = deur.get("open_entiteit")
-        ak = self.hass.data.get(DOMAIN, {}).get("akuvox")
-        if not ent and ak and ak.aan and ak.deur_id == deur["id"]:
+        from .akuvox import akuvox_voor_deur
+        ak = akuvox_voor_deur(self.hass, deur["id"])
+        if not ent and ak:
             await ak.async_open(deur.get("puls_s", PULS_STANDAARD) or 5)
             return
         if not ent:
