@@ -29,4 +29,6 @@ De gezichtsserver (container op Unraid) voor een deur met camera (Akuvox) gebrui
 | Status | POST /status | zelfde velden, `gezichten` = aantal ontsleutelde personen |
 | Foto | POST /foto | optioneel: beeld van het moment van herkennen bij de uid die /wacht vraagt |
 
-Per deur koppelt de server apart (eigen koppelcode). Toestemming v2 vermeldt de gezichtsserver; pakketten met v1 blijven geldig voor de tablets.
+| Doorzetten | GET /herverpak, POST /herverpak | enkel soort server: taken = afdrukken die de server kan lezen maar die ontbreken voor een toestel aan een deur van die persoon. De server pakt de AES sleutel uit en verpakt ze voor de doelen (RSA-OAEP SHA-1), HA ziet enkel verpakte sleutels |
+
+Elke gezichtsserver krijgt bij een scan ook een verpakte sleutel als bewaarder (in het portaal als "Nieuwe toestellen"), ook voor wie geen toegang heeft tot zijn deur. Daardoor hoeft niemand opnieuw te scannen bij een nieuwe tablet of een extra deur. Per deur koppelt de server apart (eigen koppelcode). Toestemming v2 vermeldt de gezichtsserver; pakketten met v1 blijven geldig voor de tablets.

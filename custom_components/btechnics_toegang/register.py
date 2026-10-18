@@ -40,7 +40,7 @@ from .const import (
     UITNODIGING_DAGEN,
 )
 from .geldigheid import controleer_blok
-from .gezicht import GezichtFout, controleer_pakket, publieke_sleutel
+from .gezicht import GezichtFout, b64, controleer_pakket, publieke_sleutel
 from .hashing import hash_waarde, kaart_norm, pin_norm, sleutel_hash, zout
 
 
@@ -654,13 +654,63 @@ class Register:
     # ------------------------------------------------------------------ gezicht
 
     def gezicht_tablets(self, p: dict) -> list[dict]:
-        """Tablets aan de deuren van deze persoon die een publieke sleutel gaven."""
-        uit = []
+        """Toestellen waarvoor de gsm de afdruk versleutelt: tablets en gezichtsservers aan de deuren van deze persoon,
+        plus elke gezichtsserver als bewaarder. Die zet de afdruk later door naar nieuwe toestellen of deuren,
+        zodat niemand opnieuw moet scannen."""
+        uit, gezien = [], set()
         for t in self.data["tablets"].values():
-            if t["deur_id"] in p["deuren"] and t.get("pubkey"):
-                uit.append({"pubkey_id": t["pubkey_id"], "pubkey": t["pubkey"], "tablet": t["naam"], "soort": t.get("soort", "tablet"),
-                            "deur": self.data["deuren"].get(t["deur_id"], {}).get("naam", "?")})
+            if not t.get("pubkey") or t["pubkey_id"] in gezien:
+                continue
+            server = t.get("soort") == "server"
+            if t["deur_id"] in p["deuren"]:
+                deur = self.data["deuren"].get(t["deur_id"], {}).get("naam", "?")
+            elif server:
+                deur = "Nieuwe toestellen"
+            else:
+                continue
+            gezien.add(t["pubkey_id"])
+            uit.append({"pubkey_id": t["pubkey_id"], "pubkey": t["pubkey"], "tablet": t["naam"], "soort": t.get("soort", "tablet"),
+                        "deur": deur})
         return uit
+
+    # ------------------------------------------------------------------ doorzetten door de gezichtsserver
+
+    def herverpak_taken(self, server: dict) -> list[dict]:
+        """Afdrukken die de server kan lezen maar die nog ontbreken voor een toestel aan een deur van die persoon."""
+        kid = server.get("pubkey_id")
+        if server.get("soort") != "server" or not kid:
+            return []
+        taken = []
+        for p in self.data["personen"].values():
+            g = p.get("gezicht")
+            if not g or p["status"] == "retired" or kid not in g["sleutels"]:
+                continue
+            doel = [{"pubkey_id": t["pubkey_id"], "pubkey": t["pubkey"]} for t in self.gezicht_tablets(p) if t["pubkey_id"] not in g["sleutels"]]
+            if doel:
+                taken.append({"persoon_id": p["id"], "sleutel": g["sleutels"][kid], "aad": GEZICHT_AAD + p["id"], "doel": doel})
+        return taken
+
+    def herverpak_zetten(self, server: dict, persoon_id: str, sleutels: dict) -> int:
+        """De server stuurt de AES sleutel van een afdruk, verpakt voor nieuwe toestellen. HA ziet enkel verpakte sleutels."""
+        kid = server.get("pubkey_id")
+        p = self.data["personen"].get(persoon_id)
+        if server.get("soort") != "server" or not p or not p.get("gezicht") or kid not in p["gezicht"]["sleutels"]:
+            raise ToegangFout("onbekende afdruk")
+        mag = {t["pubkey_id"] for t in self.gezicht_tablets(p)}
+        nieuw = 0
+        for doel, s in (sleutels or {}).items():
+            if doel not in mag or doel in p["gezicht"]["sleutels"]:
+                continue
+            try:
+                b64(s, "sleutel", 256, 512)
+            except GezichtFout as e:
+                raise ToegangFout(str(e)) from e
+            p["gezicht"]["sleutels"][doel] = s
+            nieuw += 1
+        if nieuw:
+            self.audit("gezichtsserver", "aangepast", p["naam"], p["deuren"], f"gezichtsafdruk doorgezet naar {nieuw} toestel(len)")
+            self.gewijzigd()
+        return nieuw
 
     def gezicht_zetten(self, p: dict, huidige_pin: str, pakket: dict) -> dict:
         self._portaal_controle(p, huidige_pin)
@@ -704,8 +754,11 @@ class Register:
             return
         t["pubkey"], t["pubkey_id"], t["pubkey_sinds"] = der, kid, _iso(_nu())
         # wie al een gezicht had, mist het nu op deze tablet: melden (Work mailt dan de portaallink om opnieuw te scannen)
+        servers = {x["pubkey_id"] for x in self.data["tablets"].values() if x.get("soort") == "server" and x.get("pubkey_id") and x is not t}
+        # wie een afdruk heeft die een gezichtsserver kan lezen, krijgt ze automatisch doorgezet: niet opnieuw scannen
         missen = [p for p in self.data["personen"].values()
-                  if p.get("gezicht") and p["status"] != "retired" and t["deur_id"] in p["deuren"] and kid not in p["gezicht"]["sleutels"]]
+                  if p.get("gezicht") and p["status"] != "retired" and t["deur_id"] in p["deuren"] and kid not in p["gezicht"]["sleutels"]
+                  and not servers & set(p["gezicht"]["sleutels"])]
         if missen:
             self.hass.bus.async_fire(f"{DOMAIN}_gezicht_ontbreekt", {"tablet": t["naam"], "deur_id": t["deur_id"],
                                                                      "personen": [{"persoon_id": p["id"], "naam": p["naam"],

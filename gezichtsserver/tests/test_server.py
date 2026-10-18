@@ -109,3 +109,34 @@ def test_beslissen():
     # te ver weg: niets
     b = Beslisser(Instellingen(oog_min=200))
     assert _loop(b, personen, bijna, 0.99) == []
+
+
+def test_herverpakken(tmp_path):
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    import hashlib
+    ha = HA("https://127.0.0.1:1", tmp_path, "Test", "0")
+    ha.staat["sleutel"] = "x"
+    aes = AESGCM.generate_key(256)
+    eigen = serialization.load_der_public_key(base64.b64decode(ha.pubkey))
+    doel = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    der = doel.public_key().public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
+    taak = {"persoon_id": "p_1", "sleutel": base64.b64encode(eigen.encrypt(aes, OAEP)).decode(), "aad": "btx-gezicht-v1:p_1",
+            "doel": [{"pubkey_id": hashlib.sha256(der).hexdigest(), "pubkey": base64.b64encode(der).decode()},
+                     {"pubkey_id": "0" * 64, "pubkey": base64.b64encode(der).decode()}]}   # tweede: id klopt niet, overslaan
+    gepost = []
+
+    class Antw:
+        def __init__(self, d): self.d = d
+        def raise_for_status(self): pass
+        def json(self): return self.d
+
+    class Sessie:
+        def get(self, url, **kw): return Antw({"taken": [taak]})
+        def post(self, url, json=None, **kw):
+            gepost.append(json)
+            return Antw({"nieuw": len(json["sleutels"])})
+
+    ha.sessie = Sessie()
+    assert ha.herverpakken() == 1
+    (kid, verpakt), = gepost[0]["sleutels"].items()
+    assert doel.decrypt(base64.b64decode(verpakt), OAEP) == aes

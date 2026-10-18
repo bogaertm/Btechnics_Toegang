@@ -165,6 +165,10 @@ class HA:
         LOG.info("lijst versie %s: %d personen, %d met gezicht", self.versie, len(lijst.get("personen", [])), len(personen))
         if self.bij_lijst:
             self.bij_lijst()
+        try:
+            self.herverpakken()
+        except Exception as e:  # noqa: BLE001
+            LOG.warning("doorzetten: %s", e)
         return True
 
     def ontsleutel(self, gz: dict) -> np.ndarray:
@@ -176,6 +180,33 @@ class HA:
             raise ValueError(f"versie {klaar.get('versie')} past niet bij {VERSIE}")
         a = np.stack([np.frombuffer(base64.b64decode(x), "<f4") for x in klaar["afdrukken"]]).astype(np.float32)
         return a / np.linalg.norm(a, axis=1, keepdims=True)
+
+    def herverpakken(self) -> int:
+        """Afdrukken doorzetten naar nieuwe toestellen of deuren: AES sleutel uitpakken met de eigen sleutel en
+        verpakken voor de publieke sleutel van elk doel. De afdrukken zelf blijven onaangeroerd in HA."""
+        r = self.sessie.get(self.url + API + "/herverpak", headers=self._kop(), timeout=20)
+        r.raise_for_status()
+        n = 0
+        for tk in r.json().get("taken") or []:
+            try:
+                aes = self.sleutel.decrypt(base64.b64decode(tk["sleutel"]), OAEP)
+                sleutels = {}
+                for d in tk["doel"]:
+                    der = base64.b64decode(d["pubkey"])
+                    if hashlib.sha256(der).hexdigest() != d["pubkey_id"]:
+                        continue
+                    pub = serialization.load_der_public_key(der)
+                    sleutels[d["pubkey_id"]] = base64.b64encode(pub.encrypt(aes, OAEP)).decode()
+                if sleutels:
+                    a = self.sessie.post(self.url + API + "/herverpak", headers=self._kop(), timeout=20,
+                                         json={"persoon_id": tk["persoon_id"], "sleutels": sleutels})
+                    a.raise_for_status()
+                    n += a.json().get("nieuw", 0)
+            except Exception as e:  # noqa: BLE001
+                LOG.warning("doorzetten voor %s: %s", tk.get("persoon_id"), e)
+        if n:
+            LOG.info("%d afdruk(ken) doorgezet naar nieuwe toestellen", n)
+        return n
 
     # ------------------------------------------------------------------ lussen
 
@@ -216,6 +247,7 @@ class HA:
                 r = self.sessie.post(self.url + API + "/status", headers=self._kop(), json=body, timeout=15)
                 if r.ok and r.json().get("pubkey_fout"):
                     LOG.error("HA weigert de sleutel: %s", r.json()["pubkey_fout"])
+                self.herverpakken()   # vangnet: ook als er geen nieuwe lijstversie kwam
             except Exception as e:  # noqa: BLE001
                 LOG.warning("status: %s", e)
             stop.wait(60)
