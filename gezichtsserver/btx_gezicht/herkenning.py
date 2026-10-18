@@ -77,7 +77,7 @@ class Herkenner:
 
         opties = mp.tasks.vision.FaceLandmarkerOptions(
             base_options=mp.tasks.BaseOptions(model_asset_path=str(modellen / "face_landmarker.task")),
-            running_mode=mp.tasks.vision.RunningMode.VIDEO, num_faces=2,
+            running_mode=mp.tasks.vision.RunningMode.IMAGE, num_faces=1,
             min_face_detection_confidence=0.6, min_face_presence_confidence=0.6, min_tracking_confidence=0.6)
         self._mp = mp
         self.landmarker = mp.tasks.vision.FaceLandmarker.create_from_options(opties)
@@ -90,24 +90,41 @@ class Herkenner:
         self.fas = [(2.7, ort.InferenceSession(str(modellen / "2.7_80x80_MiniFASNetV2.onnx"), so, providers=["CPUExecutionProvider"])),
                     (4.0, ort.InferenceSession(str(modellen / "4_0_0_80x80_MiniFASNetV1SE.onnx"), so, providers=["CPUExecutionProvider"]))]
         self._ts = 0
+        # YuNet vindt ook kleine gezichten in het volle beeld; MediaPipe zoekt daarna de punten in een vergrote uitsnede
+        self.yunet = cv2.FaceDetectorYN.create(str(modellen / "face_detection_yunet_2023mar.onnx"), "", (320, 320), 0.7, 0.3, 50)
 
     # ------------------------------------------------------------------ punten
 
-    def gezichten(self, rgb: np.ndarray, ts_ms: int, analyse_breedte: int = 1280) -> list[Gezicht]:
-        """Gezichten in een RGB beeld (volle resolutie). De punten worden gezocht op een verkleind beeld."""
+    def gezichten(self, rgb: np.ndarray, ts_ms: int = 0, uitsnede: int = 256) -> list[Gezicht]:
+        """Gezichten in een RGB beeld (volle resolutie), grootste eerst.
+        1) YuNet op het hele beeld, 2) per gezicht een vierkante uitsnede (2,2 x het vak) vergroot tot 256 px,
+        3) MediaPipe punten in die uitsnede, terug omgerekend naar het volle beeld."""
         h, w = rgb.shape[:2]
-        if w > analyse_breedte:
-            klein = cv2.resize(rgb, (analyse_breedte, int(h * analyse_breedte / w)), interpolation=cv2.INTER_AREA)
-        else:
-            klein = rgb
-        ts_ms = max(ts_ms, self._ts + 1)
-        self._ts = ts_ms
-        res = self.landmarker.detect_for_video(self._mp.Image(image_format=self._mp.ImageFormat.SRGB,
-                                                              data=np.ascontiguousarray(klein)), ts_ms)
+        self.yunet.setInputSize((w, h))
+        _, vakken = self.yunet.detect(np.ascontiguousarray(rgb[:, :, ::-1]))
         uit = []
-        for lm in res.face_landmarks or []:
-            p = np.array([[q.x * w, q.y * h, q.z * w] for q in lm], dtype=np.float64)
-            uit.append(self._maak(p))
+        if vakken is None:
+            return uit
+        for v in sorted(vakken, key=lambda v: -v[2] * v[3])[:2]:
+            x, y, bw, bh = v[:4]
+            zijde = max(bw, bh) * 2.2
+            cx, cy = x + bw / 2, y + bh / 2
+            x0, y0 = int(round(cx - zijde / 2)), int(round(cy - zijde / 2))
+            z = int(round(zijde))
+            # uitsnede met zwarte rand als ze buiten het beeld valt
+            snit = np.zeros((z, z, 3), np.uint8)
+            sx0, sy0, sx1, sy1 = max(0, x0), max(0, y0), min(w, x0 + z), min(h, y0 + z)
+            if sx1 <= sx0 or sy1 <= sy0:
+                continue
+            snit[sy0 - y0:sy1 - y0, sx0 - x0:sx1 - x0] = rgb[sy0:sy1, sx0:sx1]
+            groot = cv2.resize(snit, (uitsnede, uitsnede), interpolation=cv2.INTER_LINEAR if z < uitsnede else cv2.INTER_AREA)
+            res = self.landmarker.detect(self._mp.Image(image_format=self._mp.ImageFormat.SRGB, data=np.ascontiguousarray(groot)))
+            for lm in res.face_landmarks or []:
+                p = np.array([[x0 + q.x * z, y0 + q.y * z, q.z * z] for q in lm], dtype=np.float64)
+                g = self._maak(p)
+                g.extra["yunet"] = float(v[14])
+                uit.append(g)
+                break
         uit.sort(key=lambda g: -g.oog)
         return uit
 

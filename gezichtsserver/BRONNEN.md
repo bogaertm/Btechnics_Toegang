@@ -8,3 +8,4 @@
 | btx_gezicht/* | Btechnics | |
 
 Getoetst: de keten (MediaPipe punten, uitlijning, MobileFaceNet) geeft cosinus 0,99999 tegen de afdruk die het portaal op de gsm maakt.
+| modellen/face_detection_yunet_2023mar.onnx | opencv/opencv_zoo face_detection_yunet (sha256 8f2383e4...) | MIT |
