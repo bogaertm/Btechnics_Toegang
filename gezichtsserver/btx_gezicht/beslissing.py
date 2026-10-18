@@ -52,8 +52,10 @@ class Sessie:
 
 
 class Beslisser:
-    def __init__(self, inst: Instellingen):
+    def __init__(self, inst: Instellingen, meten: bool = False):
         self.inst = inst
+        self.meten = meten          # proefmodus: ook verder dan oog_min meten en per sessie een samenvatting geven
+        self.samenvatting: dict | None = None
         self.sessie: Sessie | None = None
         self.laatst_gezien = 0.0
         self.geopend: dict[str, float] = {}
@@ -76,6 +78,8 @@ class Beslisser:
         inst = self.inst
         if g is None:
             if self.sessie and nu - self.laatst_gezien > 2.0:
+                if self.meten:
+                    self.samenvatting = self._samenvatten(self.sessie)
                 self.sessie = None
             return None
         self.laatst_gezien = nu
@@ -85,7 +89,8 @@ class Beslisser:
         recht = abs(g.draai) <= inst.hoek_max and abs(g.kantel) <= inst.hoek_max
         dichtbij = g.oog >= inst.oog_min
         m = Meting(t=nu, oog=g.oog, midden=g.midden, vorm=h.vorm(g), recht=recht, dichtbij=dichtbij)
-        if recht and dichtbij and personen:
+        meet_ver = self.meten and recht and g.oog >= 20 and len(self.sessie.metingen) % 3 == 0
+        if recht and (dichtbij or meet_ver) and personen:
             h.afdruk(rgb, g)
             m.scherpte = g.scherpte
             if g.scherpte >= inst.scherpte_min:
@@ -93,6 +98,22 @@ class Beslisser:
                 m.echt = h.echtheid(rgb, g)
         self.sessie.metingen.append(m)
         return self._besluit(nu)
+
+    @staticmethod
+    def _samenvatten(s: Sessie) -> dict | None:
+        ms = list(s.metingen)
+        if len(ms) < 4:
+            return None
+        gemeten = [x for x in ms if x.persoon]
+        uit = {"duur": round(ms[-1].t - ms[0].t, 1), "beelden": len(ms), "oog_max": round(max(x.oog for x in ms), 1),
+               "recht": round(sum(x.recht for x in ms) / len(ms), 2), "gemeten": len(gemeten)}
+        if gemeten:
+            best = max(gemeten, key=lambda x: x.cos)
+            pers = [x for x in gemeten if x.persoon == best.persoon]
+            uit.update({"persoon_id": best.persoon, "cos_max": round(best.cos, 3), "cos_mediaan": round(float(np.median([x.cos for x in pers])), 3),
+                        "echt_mediaan": round(float(np.median([x.echt for x in pers])), 3), "oog_bij_max": round(best.oog, 1),
+                        "scherpte": round(float(np.median([x.scherpte for x in gemeten])), 0)})
+        return uit
 
     def diepte(self) -> float | None:
         """3D bij naderen: vorm van ver (oog <= 70 % van nu) tegenover dichtbij, gedeeld door de ruis tussen opeenvolgende beelden."""
@@ -145,7 +166,7 @@ class Beslisser:
                 return {"actie": "onbekend", **meting}
             return None
         s.gemeld = True
-        if self.geblokkeerd.get(pid, 0) > nu:
+        if pid in self.geblokkeerd and self.geblokkeerd[pid] > nu:
             return {"actie": "geblokkeerd", **meting}
         echt_ok = echt >= inst.echt_min and ((diepte is not None and diepte >= inst.diepte_min) or echt >= inst.echt_hoog)
         if echt < inst.echt_min:
@@ -154,7 +175,7 @@ class Beslisser:
             return {"actie": "foto", **meting}
         if not echt_ok:
             return {"actie": "onzeker", **meting}   # echt, maar zonder 3D bewijs en niet hoog genoeg
-        if self.geopend.get(pid, 0) > nu - inst.wacht_na_open:
+        if pid in self.geopend and self.geopend[pid] > nu - inst.wacht_na_open:
             return None
         self.geopend[pid] = nu
         return {"actie": "open", **meting}
