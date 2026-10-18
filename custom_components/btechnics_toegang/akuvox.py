@@ -261,8 +261,15 @@ class Akuvox:
             ruw_log = [{k: v for k, v in x.items() if k not in ("PicUrl", "Image")} for x in ((log.get("data") or {}).get("item") or [])[:6]]
         except AkuvoxFout as e:
             ruw_log = [str(e)]
-        return {"eigen_gebruikers": [{k: v for k, v in x.items() if k not in ("PrivatePIN", "CardCode", "BLE_AuthCode")}
-                                     for x in lijst if str(x.get("UserID")) in eigen],
+        geheim = ("PrivatePIN", "CardCode", "BLE_AuthCode", "PhoneNum", "QrCodeUrl")
+        try:
+            schemas = (await self._vraag("GET", "/api/schedule/get?page=1")).get("data")
+        except AkuvoxFout as e:
+            schemas = str(e)
+        return {"eigen_gebruikers": [{k: v for k, v in x.items() if k not in geheim} for x in lijst if str(x.get("UserID")) in eigen],
+                "andere_gebruikers": [{k: v for k, v in x.items() if k in ("Source", "ScheduleRelay", "RelayScheduleActivationPermission", "Group", "WebRelay")}
+                                      for x in lijst if str(x.get("UserID")) not in eigen][:4],
+                "schemas": schemas,
                 "deurlog": ruw_log,
                 "gebruikers": len(lijst), "van_ons": sum(1 for x in lijst if str(x.get("UserID")) in eigen),
                 "bronnen": sorted({str(x.get("Source", "?")) for x in lijst}),
