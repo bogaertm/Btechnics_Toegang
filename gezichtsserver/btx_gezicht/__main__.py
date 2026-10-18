@@ -19,7 +19,7 @@ from .beslissing import Beslisser, Instellingen
 from .ha import HA, wacht_tot
 from .herkenning import Herkenner
 
-VERSIE = "0.1.1"
+VERSIE = "0.1.2"
 LOG = logging.getLogger("btx")
 
 
@@ -77,7 +77,7 @@ def main():
     proef = env("PROEF", "1") not in ("0", "nee", "false", "uit")
     inst = Instellingen(drempel=env("DREMPEL", 0.70, float), echt_min=env("ECHT_MIN", 0.85, float),
                         echt_hoog=env("ECHT_HOOG", 0.97, float), diepte_min=env("DIEPTE_MIN", 2.5, float),
-                        oog_min=env("OOG_MIN", 70.0, float), hoek_max=env("HOEK_MAX", 15.0, float), stil_s=env("STIL_S", 2.0, float))
+                        oog_min=env("OOG_MIN", 45.0, float), hoek_max=env("HOEK_MAX", 15.0, float), stil_s=env("STIL_S", 2.0, float))
     fps = env("FPS", 6.0, float)
     stop = threading.Event()
     for s in (signal.SIGTERM, signal.SIGINT):
@@ -92,7 +92,7 @@ def main():
     LOG.info("start v%s, %s, sleutel %s", VERSIE, "PROEFMODUS (meet enkel, opent niet)" if proef else "LIVE", ha.pubkey_id[:16])
 
     h = Herkenner(threads=env("THREADS", 2, int))
-    b = Beslisser(inst)
+    b = Beslisser(inst, meten=proef)
     cam = Camera(camera_url, stop)
 
     def fotovraag(uid):
@@ -129,6 +129,15 @@ def main():
             besluit, g = None, None
         if besluit:
             verwerk(ha, besluit, proef)
+        if b.samenvatting:
+            z, b.samenvatting = b.samenvatting, None
+            naam = (ha.personen.get(z.get("persoon_id")) or {}).get("naam", "?") if z.get("persoon_id") else None
+            tekst = (f"Proef meting: {z['duur']} s, {z['beelden']} beelden, oog max {z['oog_max']} px, recht {int(z['recht'] * 100)}%"
+                     + (f", beste {naam} cos {z['cos_max']} (mediaan {z['cos_mediaan']}) bij oog {z['oog_bij_max']} px, echt {z['echt_mediaan']}, scherpte {z['scherpte']:.0f}"
+                        if naam else ", geen afdruk gemeten"))
+            LOG.info(tekst)
+            if naam or z["oog_max"] >= 30:
+                ha.log("systeem", tekst=tekst)
         # trager als er niemand is, zo blijft de server rustig
         stil = 0 if g is not None else stil + 1
         wacht = (1 / fps if stil < 3 * fps else 0.4) - (time.monotonic() - begin)

@@ -15,7 +15,7 @@ Een container per deur. Beeld: `ghcr.io/bogaertm/btx-gezichtsserver`. Map `/data
 | DREMPEL | 0.70 | cosinus met de afdruk |
 | ECHT_MIN / ECHT_HOOG | 0.85 / 0.97 | echtheid (MiniFASNet); zonder 3D bewijs bij naderen is ECHT_HOOG nodig |
 | DIEPTE_MIN | 2.5 | vervorming bij naderen tegenover ruis |
-| OOG_MIN | 70 | pixels tussen de irissen (dichtbij) |
+| OOG_MIN | 45 | pixels tussen de irissen (dichtbij) |
 | HOEK_MAX | 15 | graden draai en kanteling |
 | STIL_S | 2 | seconden stil en herkend |
 | FPS / THREADS | 6 / 2 | belasting |
