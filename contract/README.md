@@ -39,3 +39,17 @@ Work opent `https://iot.bogaert.me/api/btechnics_toegang/werklink?w=<werk_id>&t=
 t ligt hoogstens 10 minuten in de toekomst, elke link werkt een keer. HA stuurt door naar een portaalsessie van 30 minuten
 waarin de medewerker zonder huidige code zijn code wijzigt (nieuwe code twee keer) en gezichtsherkenning instelt.
 Het geheim (32 tot 128 tekens) maakt Work zelf en stuurt het een keer via het IOT kanaal: actie `geheim_zetten`, velden `{geheim}`.
+
+## Audit 19/10 (v0.13.0)
+
+| Regel | Waar |
+|---|---|
+| Toestel-endpoints (koppel, wacht, lijst, log, foto, modus, status, open, herverpak) weigeren verkeer via de tunnel (Cf-Connecting-Ip, Cf-Ray, X-Forwarded-For) | api.py |
+| Het soort (tablet of server) kiest de beheerder bij de koppelcode; een toestel dat iets anders beweert, wordt geweigerd | register.koppelen |
+| Een nieuwe publieke sleutel van een gekoppeld toestel wacht op goedkeuring (Deuren, Sleutel goedkeuren); /status geeft pubkey_fout tot dan | register._pubkey_zetten |
+| De gezichtsserver opent enkel met methode gezicht en enkel als de deur gezicht_live heeft (dashboard, deur aanpassen); anders 403 reden proef | api.OpenView |
+| Akuvox: na elke sync worden de gebruikers op het toestel opnieuw gelezen en gecontroleerd (naam, code, ScheduleRelay met 1001 en relais 1, activatierecht). ok is enkel waar als die controle slaagt | akuvox.async_sync |
+| Akuvox: een UserID wordt enkel gewijzigd of gewist als naam of toestel-ID nog van ons is | akuvox._is_van_ons |
+| Akuvox: codes van vreemde gebruikers op het toestel (als hash) mogen niet gekozen worden | register.controleer_pin |
+| Akuvox: weigert het toestel een eigen gebruiker (Status Failed), dan volgt een melding en een nieuwe controle | akuvox.async_deurlog |
+| Echt toestelgedrag staat in contract/akuvox_s532.json; NepAkuvox in de tests volgt dat | tests |

@@ -64,9 +64,13 @@ async def test_tijdelijke_code_en_planner(hass_klaar, hass_ws_client, freezer: F
     assert p["status"] == "retired"
     assert _reg(hass).data["audit"][-1]["user"] == "planner"
     assert "einde geldigheid" in _reg(hass).data["audit"][-1]["detail"]
-    # herstellen: geldigheid voorbij, dus gewist en actief
+    # herstellen met een verlopen geldigheid: geweigerd (vroeger werd de code dan onbeperkt geldig)
     r = await _ws(ws, 3, type=f"{DOMAIN}/manage/action", action="restore", entry=pid)
-    assert r["success"] and p["status"] == "active" and p["valid_until"] is None
+    assert p["status"] == "retired"
+    # eerst een nieuwe einddatum, dan herstellen
+    r = await _ws(ws, 31, type=f"{DOMAIN}/manage/action", action="restore", entry=pid,
+                  valid_until=(dt_util.now() + timedelta(hours=2)).replace(microsecond=0).isoformat())
+    assert p["status"] == "active" and p["valid_until"]
 
 
 async def test_wacht_op_begin(hass_klaar, hass_ws_client, freezer: FrozenDateTimeFactory):

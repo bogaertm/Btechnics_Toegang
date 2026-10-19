@@ -324,22 +324,23 @@ class BtxToegang extends HTMLElement {
           <button class="btn" data-a="deur" data-id="${d.id}"><ha-icon icon="mdi:pencil"></ha-icon> Aanpassen</button></span></div>
         <div class="seg">${MODI.map(([m, l, i]) => `<button class="${d.modus === m ? "on" : ""}" data-a="modus" data-id="${d.id}" data-m="${m}"><ha-icon icon="${i}"></ha-icon>${l}</button>`).join("")}</div>
         <div class="hint" style="margin-top:6px">Modus sinds ${esc(d.modus_sinds ? f.dateTime(new Date(d.modus_sinds)) : "?")}, gezet door ${d.modus_door === "ha" ? "Home Assistant" : esc((tablets.find((t) => t.id === d.modus_door) || {}).naam || "de tablet")}.
-          Opent met: ${!d.open_entiteit && this._akuvoxDeur(d.id) ? `<b>relais 1 van de Akuvox</b>${d.puls_s ? `, ${d.puls_s} s` : ""}` : d.open_entiteit ? `<b>${esc(this._entNaam(d.open_entiteit))}</b>${/^(switch|input_boolean|light)\./.test(d.open_entiteit) ? (d.puls_s ? `, gaat na ${d.puls_s} s weer uit` : ", blijft aan (pulsduur 0)") : ""}` : `<span class="error">nog niets gekozen</span>`}${d.camera ? ` · Foto: <b>${esc(this._entNaam(d.camera))}</b>` : ""}</div>
+          Opent met: ${!d.open_entiteit && this._akuvoxDeur(d.id) ? `<b>relais 1 van de Akuvox</b>${d.puls_s ? `, ${d.puls_s} s` : ""}` : d.open_entiteit ? `<b>${esc(this._entNaam(d.open_entiteit))}</b>${/^(switch|input_boolean|light)\./.test(d.open_entiteit) ? (d.puls_s ? `, gaat na ${d.puls_s} s weer uit` : ", blijft aan (pulsduur 0)") : ""}` : `<span class="error">nog niets gekozen</span>`}${d.camera ? ` · Foto: <b>${esc(this._entNaam(d.camera))}</b>` : ""}${tb.some((t) => t.soort === "server") ? ` · Gezichtsserver: <b>${d.gezicht_live ? "mag openen" : "proef, opent nooit"}</b>` : ""}</div>
         ${(() => { const a = (this._data.akuvoxen || (this._data.akuvox ? [this._data.akuvox] : [])).find((x) => x.deur_id === d.id); if (!a) return "";
-          const st = !a.aan ? "sync staat uit" : a.ok === null ? "nog niet gesynct" : a.ok ? "sync in orde" : `fout: ${esc(a.fout || "?")}`;
-          return `<div class="sub">Akuvox ${a.nr ? `toestel ${a.nr} ` : ""}(${esc(a.ip)})</div><div class="hint"><span class="dot ${a.ok ? "on" : "off"}"></span> ${st}${a.aan ? ` · ${a.eigen} personen van HA op het toestel, ${a.toestel} gebruikers in totaal${a.vreemd_boven_start ? `, ${a.vreemd_boven_start} onbekende vanaf 700001 (blijven staan)` : ""}${a.laatst ? `, laatst ${esc(f.compact(new Date(a.laatst)))}` : ""}` : ""}</div>
+          const st = !a.aan ? "sync staat uit" : a.ok === null ? "nog niet gecontroleerd" : a.ok ? "op het toestel gecontroleerd en in orde" : `<span class="error">${esc(a.fout || "fout")}</span>`;
+          return `<div class="sub">Akuvox ${a.nr ? `toestel ${a.nr} ` : ""}(${esc(a.ip)})</div><div class="hint"><span class="dot ${a.ok ? "on" : "off"}"></span> ${st}${a.aan ? ` · ${a.eigen}${a.gewenst !== undefined ? ` van ${a.gewenst}` : ""} personen van HA correct op het toestel, ${a.toestel} gebruikers in totaal${a.deurlog_ok === false ? `, <span class="error">deurlog niet leesbaar</span>` : ""}${a.vreemd_boven_start ? `, ${a.vreemd_boven_start} onbekende vanaf 700001 (blijven staan)` : ""}${a.laatst ? `, laatst ${esc(f.compact(new Date(a.laatst)))}` : ""}` : ""}</div>
           ${a.aan ? `<div class="hint">${a.melding_laatst ? `Directe melding (Action URL) werkt, laatst ${esc(f.compact(new Date(a.melding_laatst)))}` : `<span class="error">Nog geen directe melding: zet op de S532 bij Action URL</span> <code style="user-select:all">${esc(a.action_url || "")}</code>`}</div>` : ""}`; })()}
         <div class="sub">${tb.some((t) => t.soort === "server") ? "Tablets en gezichtsserver" : "Tablets"}</div>
         ${tb.length ? tb.map((t) => `<div class="tab"><span class="dot ${t.online ? "on" : "off"}" title="${t.online ? "Online" : "Offline"}"></span>
             <span class="mt"><b>${esc(t.naam)}</b>${t.soort === "server" ? ` <span class="hint">(gezichtsserver)</span>` : ""}<div class="hint">${t.online ? "Online" : "Offline"}${t.laatst ? `, laatst gezien ${esc(f.compact(new Date(t.laatst)))}` : ""}${t.app_versie ? ` · app ${esc(t.app_versie)}` : ""}${t.status && t.status.schema ? ` · schema ${esc(String(t.status.schema))}` : ""}${t.status && t.status.log_wachtrij ? ` · ${t.status.log_wachtrij} logregels in wachtrij` : ""}</div>
-              <div class="hint">${t.kanaal === "https" ? "Https" : t.kanaal === "http" ? `<span class="error">Nog via http</span>` : "Verbinding nog onbekend"}${t.laatste_lijst_ha ? ` · lijst opgehaald ${esc(f.compact(new Date(t.laatste_lijst_ha)))}` : ""}${t.status && t.status.laatste_lijst ? ` · geldige lijst op de tablet ${esc(f.compact(new Date(t.status.laatste_lijst)))}` : ""}</div>
+              ${t.lijst_achter ? `<div class="hint error">Lijst loopt achter: tablet heeft versie ${esc(String(t.status.versie))}, HA ${esc(String(this._data.versie))}</div>` : ""}<div class="hint">${t.kanaal === "https" ? "Https" : t.kanaal === "http" ? `<span class="error">Nog via http</span>` : "Verbinding nog onbekend"}${t.laatste_lijst_ha ? ` · lijst opgehaald ${esc(f.compact(new Date(t.laatste_lijst_ha)))}` : ""}${t.status && t.status.laatste_lijst ? ` · geldige lijst op de tablet ${esc(f.compact(new Date(t.status.laatste_lijst)))}` : ""}</div>
               <div class="hint">${!t.gezicht_sleutel ? "Gezichten: nog geen sleutel" : t.status && typeof t.status.gezichten === "number" ? (t.status.gezichten === t.gezichten_verwacht ? `Gezichten in orde (${t.gezichten_verwacht})` : `<span class="error">Gezichten: ${t.status.gezichten} op de tablet, ${t.gezichten_verwacht} verwacht</span>`) : `Gezichten: ${t.gezichten_verwacht} verwacht`}${t.status && typeof t.status.personen === "number" ? ` · ${t.status.personen} personen op de tablet` : ""}</div></span>
-            <span class="acts"><button class="btn" data-a="tabnaam" data-id="${t.id}"><ha-icon icon="mdi:pencil"></ha-icon> Naam</button><button class="btn danger" data-a="intrekken" data-id="${t.id}"><ha-icon icon="mdi:link-off"></ha-icon> Ontkoppelen</button></span></div>`).join("")
+            <span class="acts">${t.sleutel_wacht ? `<button class="btn primary" data-a="sleutel" data-id="${t.id}" title="Nieuwe sleutel ${esc(t.sleutel_wacht)}"><ha-icon icon="mdi:key-change"></ha-icon> Sleutel goedkeuren</button>` : ""}<button class="btn" data-a="tabnaam" data-id="${t.id}"><ha-icon icon="mdi:pencil"></ha-icon> Naam</button><button class="btn danger" data-a="intrekken" data-id="${t.id}"><ha-icon icon="mdi:link-off"></ha-icon> Ontkoppelen</button></span></div>`).join("")
           : `<div class="hint">Nog geen tablet gekoppeld.</div>`}
         ${(() => { const meld = (this._data.log || []).filter((r) => r.deur_id === d.id).slice(0, 5);
           return meld.length ? `<div class="sub">Laatste meldingen van de tablet</div>${meld.map((r) => `<div class="hint">${esc(f.compact(new Date(r.tijd)))} · ${esc(SOORT[r.soort] || r.soort)}: ${esc(r.tekst || "")}</div>`).join("")}` : ""; })()}
-        ${c ? `<div class="bigcode"><span class="mono">${esc(c.code)}</span><small>Koppelcode voor ${esc(d.naam)}. Geef ze in op de tablet onder Beheer, Koppelen${this._akuvoxDeur(d.id) ? ", of bij de gezichtsserver als KOPPELCODE" : ""}.<br>${this._data.https && this._data.https.kort ? `Vingerafdruk https: <b class="mono">${esc(this._data.https.kort)}</b> (moet gelijk zijn aan wat de tablet toont)<br>` : ""}Nog ${Math.floor(rest / 60)}:${String(rest % 60).padStart(2, "0")} geldig, één keer bruikbaar.</small></div>`
-          : `<div style="margin-top:10px"><button class="btn" data-a="koppel" data-id="${d.id}"><ha-icon icon="mdi:tablet"></ha-icon> ${this._akuvoxDeur(d.id) ? "Tablet of gezichtsserver koppelen" : "Tablet koppelen"}</button></div>`}
+        ${c ? `<div class="bigcode"><span class="mono">${esc(c.code)}</span><small>Koppelcode voor ${c.soort === "server" ? "de gezichtsserver" : "een tablet"} aan ${esc(d.naam)}. ${c.soort === "server" ? "Zet ze bij de gezichtsserver als KOPPELCODE." : "Geef ze in op de tablet onder Beheer, Koppelen."}<br>${this._data.https && this._data.https.kort ? `Vingerafdruk https: <b class="mono">${esc(this._data.https.kort)}</b> (moet gelijk zijn aan wat de tablet toont)<br>` : ""}Nog ${Math.floor(rest / 60)}:${String(rest % 60).padStart(2, "0")} geldig, één keer bruikbaar.</small></div>`
+          : `<div style="margin-top:10px"><button class="btn" data-a="koppel" data-id="${d.id}"><ha-icon icon="mdi:tablet"></ha-icon> Tablet koppelen</button>
+             ${this._akuvoxDeur(d.id) ? `<button class="btn" data-a="koppel" data-s="server" data-id="${d.id}"><ha-icon icon="mdi:face-recognition"></ha-icon> Gezichtsserver koppelen</button>` : ""}</div>`}
       </div>`;
     }).join("") + (this._beheerders ? `<div class="deur"><div class="kop"><b>Beheerders</b></div>
       <div class="hint">Deze gebruikers van Home Assistant zien alle codes en kunnen ze delen. Elke keer dat iemand een code bekijkt of deelt, staat in de Wijzigingen bij Codes.</div>
@@ -361,6 +362,8 @@ class BtxToegang extends HTMLElement {
       <div class="lbl">Camera voor de foto bij elke toegang (enkel zichtbaar voor beheerders)</div>
       <div class="row"><select id="fcam" style="min-width:260px;max-width:100%"><option value="">Geen foto</option>
         ${this._cameras().map((x) => `<option value="${esc(x.id)}" ${d && x.id === d.camera ? "selected" : ""}>${esc(x.naam)} (${esc(x.id)})</option>`).join("")}</select></div>
+      ${d && this._data.tablets.some((t) => t.deur_id === d.id && t.soort === "server") ? `<div class="lbl">Gezichtsserver</div>
+      <div class="row"><label style="display:flex;gap:8px;align-items:center"><input id="fgez" type="checkbox" ${d.gezicht_live ? "checked" : ""}> De gezichtsserver mag deze deur openen (anders enkel proef: meten, nooit openen)</label></div>` : ""}
       <div class="row"><button class="btn primary" id="fbewaar">${d ? "Bewaren" : "Deur toevoegen"}</button><button class="btn" id="fannuleer">Annuleren</button>
         ${d ? `<span style="flex:1"></span><button class="btn danger" id="fweg"><ha-icon icon="mdi:delete"></ha-icon> Deur verwijderen</button>` : ""}</div>`);
     p.querySelector("#fannuleer").addEventListener("click", () => this._sluit());
@@ -370,7 +373,11 @@ class BtxToegang extends HTMLElement {
       const cam = p.querySelector("#fcam").value;
       if (!naam) return this._bericht("Geef de deur een naam.");
       this._doe(async () => {
-        if (d) await this._dienst("deur_wijzigen", { deur: d.id, naam, open_entiteit: ent, puls_s: puls, camera: cam }, true);
+        if (d) {
+          const extra = p.querySelector("#fgez") ? { gezicht_live: p.querySelector("#fgez").checked } : {};
+          if (extra.gezicht_live && !d.gezicht_live && !confirm("Gezichtsserver echt laten openen? Enkel doen na metingen met vreemden en een test met foto en scherm.")) return;
+          await this._dienst("deur_wijzigen", { deur: d.id, naam, open_entiteit: ent, puls_s: puls, camera: cam, ...extra }, true);
+        }
         else {
           const r = await this._dienst("deur_toevoegen", ent ? { naam, open_entiteit: ent } : { naam }, true);
           const nid = r && r.deur && r.deur.id;
@@ -579,9 +586,15 @@ class BtxToegang extends HTMLElement {
         return this._doe(() => this._dienst("deur_openen", { deur: id }), `Deur ${d.naam} geopend.`);
       case "koppel":
         return this._doe(async () => {
-          const r = await this._dienst("tablet_koppelcode", { deur: id }, true);
-          this._codes[id] = { code: r.code, tot: Date.now() + 10 * 60 * 1000 };
+          const soort = b.dataset.s === "server" ? "server" : "tablet";
+          const r = await this._dienst("tablet_koppelcode", { deur: id, soort }, true);
+          this._codes[id] = { code: r.code, soort, tot: Date.now() + 10 * 60 * 1000 };
         }, `Koppelcode gemaakt voor ${d.naam}.`);
+      case "sleutel": {
+        const tb = this._data.tablets.find((x) => x.id === id);
+        if (!confirm(`${tb.naam} stuurt een nieuwe sleutel (begint met ${tb.sleutel_wacht}). Enkel goedkeuren als je dit toestel zelf opnieuw instelde. Goedkeuren?`)) return;
+        return this._doe(() => this._dienst("tablet_sleutel_goedkeuren", { tablet: id }), `Sleutel van ${tb.naam} goedgekeurd.`);
+      }
       case "tabnaam": {
         const tb = this._data.tablets.find((x) => x.id === id);
         const naam = (prompt("Nieuwe naam voor deze tablet", tb.naam) || "").trim();

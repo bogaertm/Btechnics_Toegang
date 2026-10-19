@@ -35,8 +35,16 @@ def _fout(status: int, tekst: str) -> web.Response:
     return web.json_response({"fout": tekst}, status=status)
 
 
+def _niet_via_internet(request: web.Request) -> None:
+    """Tablets en de gezichtsserver praten enkel lokaal met HA. Verkeer via de Cloudflare tunnel (iot.bogaert.me)
+    draagt Cf-Connecting-Ip of X-Forwarded-For: dat weigeren we voor alle toestel-endpoints."""
+    if request.headers.get("Cf-Connecting-Ip") or request.headers.get("Cf-Ray") or request.headers.get("X-Forwarded-For"):
+        raise web.HTTPForbidden(text='{"fout": "enkel bereikbaar op het lokale netwerk"}', content_type="application/json")
+
+
 def _enkel_https(hass: HomeAssistant, request: web.Request) -> None:
     """Na de overgangsperiode (optie enkel_https) weigert HA tabletverkeer over gewoon http."""
+    _niet_via_internet(request)
     entry = hass.data[DOMAIN].get("entry")
     if entry and entry.options.get("enkel_https") and not request.secure:
         raise web.HTTPForbidden(text='{"fout": "enkel https: gebruik poort %s"}' % entry.options.get("https_poort", 8443),
@@ -228,6 +236,12 @@ class OpenView(_TabletView):
         deur = reg.data["deuren"].get(tablet["deur_id"])
         if not deur:
             return _fout(HTTPStatus.NOT_FOUND, "deur bestaat niet meer")
+        if tablet.get("soort") == "server":
+            # de gezichtsserver mag enkel op gezicht openen, en enkel als de beheerder dat voor deze deur aanzette
+            if methode != "gezicht":
+                return web.json_response({"geopend": False, "reden": "niet_toegelaten"}, status=HTTPStatus.FORBIDDEN)
+            if not deur.get("gezicht_live"):
+                return web.json_response({"geopend": False, "reden": "proef"}, status=HTTPStatus.FORBIDDEN)
         persoon = reg.data["personen"].get(data.get("persoon_id") or "")
         reden = None
         if methode in ("pin", "kaart") and (deur.get("klavier_tot") or "") > dt_util.now().isoformat(timespec="seconds"):
@@ -237,6 +251,8 @@ class OpenView(_TabletView):
                 reden = "onbekend"
             elif persoon["status"] != "active":
                 reden = "verlopen" if persoon["status"] == "retired" else "buiten_schema"
+            elif (persoon.get("valid_until") or "") and dt_util.parse_datetime(persoon["valid_until"]) <= dt_util.now():
+                reden = "verlopen"   # nog voor de planner langskomt
             else:
                 reden = reden_geweigerd({"schema": persoon["schema"]}, dt_util.now())
         # De tablet schrijft zelf een logregel; HA registreert enkel wat het zelf besliste als de tablet

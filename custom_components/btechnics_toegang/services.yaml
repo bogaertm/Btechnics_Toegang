@@ -48,6 +48,11 @@ deur_wijzigen:
       selector:
         entity:
           domain: camera
+    gezicht_live:
+      required: false
+      selector:
+        boolean: {}
+
 deur_verwijderen:
   fields:
     deur:
@@ -256,6 +261,17 @@ tablet_koppelcode:
         text: {}
     naam:
       required: false
+      selector:
+        text: {}
+    soort:
+      required: false
+      selector:
+        select:
+          options: ["tablet", "server"]
+tablet_sleutel_goedkeuren:
+  fields:
+    tablet:
+      required: true
       selector:
         text: {}
 tablet_intrekken:

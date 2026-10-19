@@ -20,7 +20,8 @@ async def test_gezichtsserver(hass_klaar, hass_ws_client, hass_client_no_auth):
     reg.deur(deur)["open_entiteit"] = "script.deur_test"
     oproepen = async_mock_service(hass, "script", "turn_on")
     priv, pub = _sleutelpaar()
-    code = (await hass.services.async_call(DOMAIN, "tablet_koppelcode", {"deur": "Vergaderzaal"}, blocking=True, return_response=True))["code"]
+    code = (await hass.services.async_call(DOMAIN, "tablet_koppelcode", {"deur": "Vergaderzaal", "soort": "server"}, blocking=True,
+                                           return_response=True))["code"]
     k = await (await client.post(f"{API}/koppel", json={"code": code, "toestel_id": "gezichtsserver-vergaderzaal",
                                                          "soort": "server", "pubkey": pub, "app_versie": "0.1.0"})).json()
     t = reg.data["tablets"][k["tablet_id"]]
@@ -50,8 +51,15 @@ async def test_gezichtsserver(hass_klaar, hass_ws_client, hass_client_no_auth):
     aes = priv.decrypt(base64.b64decode(gz["sleutel"]), OAEP)
     klaar = json.loads(AESGCM(aes).decrypt(base64.b64decode(gz["iv"]), base64.b64decode(gz["data"]), gz["aad"].encode()))
     assert len(klaar["afdrukken"]) == 4 and gz["toestemming"] == "v2"
-    # herkend: HA beslist, opent en logt
+    # herkend, maar de deur staat nog op proef: HA weigert, ook als de server zelf live staat
     pid = gz["aad"].split(":", 1)[1]
+    r = await client.post(f"{API}/open", headers=kop, json={"methode": "gezicht", "persoon_id": pid, "log": False})
+    assert r.status == 403 and (await r.json())["reden"] == "proef" and not oproepen
+    # de server mag nooit met een andere methode openen
+    r = await client.post(f"{API}/open", headers=kop, json={"methode": "ha", "log": False})
+    assert r.status == 403 and (await r.json())["reden"] == "niet_toegelaten"
+    # beheerder zet de gezichtsserver live voor deze deur
+    await hass.services.async_call(DOMAIN, "deur_wijzigen", {"deur": "Vergaderzaal", "gezicht_live": True}, blocking=True)
     r = await client.post(f"{API}/open", headers=kop, json={"methode": "gezicht", "persoon_id": pid, "log": False})
     assert r.status == 200 and (await r.json())["geopend"] is True
     await hass.async_block_till_done()
@@ -74,7 +82,8 @@ async def test_doorzetten_zonder_nieuwe_scan(hass_klaar, hass_ws_client, hass_cl
 
     async def koppel(deur, soort=None):
         priv, pub = _sleutelpaar()
-        code = (await hass.services.async_call(DOMAIN, "tablet_koppelcode", {"deur": deur}, blocking=True, return_response=True))["code"]
+        code = (await hass.services.async_call(DOMAIN, "tablet_koppelcode", {"deur": deur, "soort": soort or "tablet"}, blocking=True,
+                                               return_response=True))["code"]
         k = await (await client.post(f"{API}/koppel", json={"code": code, "toestel_id": deur + (soort or ""), "pubkey": pub,
                                                              **({"soort": soort} if soort else {})})).json()
         return priv, {"Authorization": f"Bearer {k['sleutel']}"}
@@ -129,3 +138,32 @@ async def test_doorzetten_zonder_nieuwe_scan(hass_klaar, hass_ws_client, hass_cl
     # vreemde sleutel voor een toestel dat er niet bij hoort: genegeerd
     r = await (await client.post(f"{API}/herverpak", headers=srv, json={"persoon_id": p["id"], "sleutels": {"x" * 64: "A" * 344}})).json()
     assert r["nieuw"] == 0
+
+
+
+async def test_soort_en_sleutelwissel(hass_klaar, hass_client_no_auth):
+    """Audit: het toestel kiest zijn soort niet zelf, een sleutelwissel wacht op goedkeuring, en via de tunnel kan niets."""
+    hass = hass_klaar
+    client = await hass_client_no_auth()
+    reg = _reg(hass)
+    _, pub = _sleutelpaar()
+    code = (await hass.services.async_call(DOMAIN, "tablet_koppelcode", {"deur": "Vergaderzaal"}, blocking=True, return_response=True))["code"]
+    # tabletcode, maar het toestel beweert server te zijn: geweigerd
+    r = await client.post(f"{API}/koppel", json={"code": code, "toestel_id": "x", "soort": "server", "pubkey": pub})
+    assert r.status == 403
+    code = (await hass.services.async_call(DOMAIN, "tablet_koppelcode", {"deur": "Vergaderzaal"}, blocking=True, return_response=True))["code"]
+    # via de tunnel: geweigerd, ook met een geldige code
+    r = await client.post(f"{API}/koppel", headers={"Cf-Connecting-Ip": "1.2.3.4"}, json={"code": code, "toestel_id": "t1", "pubkey": pub})
+    assert r.status == 403
+    k = await (await client.post(f"{API}/koppel", json={"code": " " + code + " ", "toestel_id": "t1", "pubkey": pub})).json()
+    t = reg.data["tablets"][k["tablet_id"]]
+    kop = {"Authorization": f"Bearer {k['sleutel']}"}
+    # andere sleutel via /status: niet toegepast, wacht op goedkeuring
+    _, pub2 = _sleutelpaar()
+    oud = t["pubkey_id"]
+    r = await (await client.post(f"{API}/status", headers=kop, json={"pubkey": pub2})).json()
+    assert r["pubkey_id"] == oud and "goedkeuring" in r["pubkey_fout"] and t["pubkey_wacht"]
+    await hass.services.async_call(DOMAIN, "tablet_sleutel_goedkeuren", {"tablet": t["id"]}, blocking=True)
+    assert t["pubkey_id"] != oud and "pubkey_wacht" not in t
+    # tabletverkeer met een tunnelkop: geweigerd
+    assert (await client.get(f"{API}/lijst", headers={**kop, "X-Forwarded-For": "1.2.3.4"})).status in (400, 403)

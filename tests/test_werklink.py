@@ -62,3 +62,38 @@ async def test_werklink(hass_klaar, hass_client_no_auth):
     assert info["vertrouwd"] is False
     r = await client.post(f"{API}/portaal/{gewoon}/wijzig", json={"telefoon": "2", "email": "j@p.be"})
     assert r.status == 400
+
+
+async def test_werklink_audit(hass_klaar, hass_client_no_auth):
+    """Audit 19/10: geen replay met hoofdletters of na herstart, enkel actieve medewerkers, uit dienst sluit alles."""
+    hass = hass_klaar
+    client = await hass_client_no_auth()
+    reg = _reg(hass)
+    deur = _deur(hass, "Vergaderzaal")
+    p = reg.toevoegen("test", naam="Jan Peeters", pin="583920", deuren=[deur])
+    p["werk_id"] = "w42"
+    reg.werk_geheim_zetten("test", GEHEIM)
+    link = _link("w42")
+    assert (await client.get(link, allow_redirects=False)).status == 302
+    # zelfde link met hoofdletters in s: geweigerd
+    basis, s = link.rsplit("&s=", 1)
+    assert (await client.get(basis + "&s=" + s.upper(), allow_redirects=False)).status == 403
+    # gebruikte links staan in de opslag (overleven een herstart)
+    assert any(k.startswith("w42.") for k in reg.data["werklinks"])
+    # geblokkeerd: geen sessie
+    reg.blokkeren("test", p["id"])
+    assert (await client.get(_link("w42", t=int(time.time()) + 200), allow_redirects=False)).status == 403
+    reg.deblokkeren("test", p["id"])
+    r = await client.get(_link("w42", t=int(time.time()) + 250), allow_redirects=False)
+    sessie = r.headers["Location"]
+    vast = reg.portaal_token("test", p["id"])
+    # te veel geweigerde codes: na 5 keer een uur dicht
+    for i in range(5):
+        r = await client.post(sessie + "/wijzig", json={"pin": "1234", "pin2": "1234", "telefoon": "1", "email": "j@p.be"})
+        assert r.status == 400
+    r = await client.post(sessie + "/wijzig", json={"pin": "740163", "pin2": "740163", "telefoon": "1", "email": "j@p.be"})
+    assert r.status == 400 and "Te veel" in (await r.json())["fout"]
+    # uit dienst: sessie en vaste link werken niet meer
+    reg.uit_dienst("test", p["id"])
+    assert (await client.get(sessie + "/info")).status == 404
+    assert (await client.get(f"{API}/portaal/{vast}/info")).status == 404

@@ -1,0 +1,11 @@
+{
+  "_uitleg": "Echt gedrag van de Akuvox S532 (firmware 532.30.10.315), opgemeten op 18/10/2026 via /api/user/get, /api/doorlog/get en /api/schedule/get. Codes en telefoonnummers weggelaten. Basis voor NepAkuvox in tests/test_akuvox.py.",
+  "user_get_veld_namen": ["BLE_AuthCode", "BLE_Expired", "BLE_KEY_ID", "BLE_Status", "C4Event", "CardCode", "ContactID", "DialAccount", "Group", "ID", "LiftFloorNum", "Name", "PhoneNum", "Priority", "PrivatePIN", "QrCodeUrl", "RelayScheduleActivationPermission", "ScheduleRelay", "Source", "UserID", "WebRelay"],
+  "werkende_gebruiker": {"Group": "Default", "RelayScheduleActivationPermission": "12", "ScheduleRelay": "1001-12;", "Source": "Local", "WebRelay": "0"},
+  "smartplus_gebruiker": {"Group": "Default", "RelayScheduleActivationPermission": "12", "ScheduleRelay": "32682-12", "Source": "Cloud", "WebRelay": "0"},
+  "add_met_ScheduleRelay_zonder_streepje": {"resultaat_op_toestel": {"ScheduleRelay": "", "RelayScheduleActivationPermission": "", "Group": ""}, "gevolg": "code herkend maar Status Failed, RelayID --"},
+  "add_met_Schedule-Relay": {"resultaat_op_toestel": {"ScheduleRelay": "1001-1;", "RelayScheduleActivationPermission": "1", "Group": "Default"}},
+  "deurlog_regel": {"AccessMode": "Normal", "Code": "<code>", "Date": "2026-10-18", "ID": "4629", "Name": "Pakket 18/10", "RelayID": "--", "Status": "Failed", "Time": "21:19:56", "Type": "PIN", "UserID": "700003"},
+  "deurlog_gelukt": {"AccessMode": "Normal", "RelayID": "A", "Status": "Succ", "Type": "PIN"},
+  "schemas": [{"DisplayID": "1001", "Name": "Always", "Daily": "00:00:00-23:59:59"}, {"DisplayID": "1002", "Name": "Never"}]
+}

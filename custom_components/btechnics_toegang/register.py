@@ -109,6 +109,8 @@ class Register:
         self._store: Store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
         self.data: dict[str, Any] = {}
         self._koppelcodes: dict[str, dict] = {}
+        # hashes van codes die op een Akuvox al bij een andere (bv. SmartPlus) gebruiker staan, per toestel
+        self.extern_pins: dict[str, set[str]] = {}
         self._foute_koppelpogingen = 0
         self._wijziging = asyncio.Condition()
         self.bij_nieuwe_tablet = None
@@ -256,9 +258,12 @@ class Register:
         return d
 
     def deur_wijzigen(self, deur_id: str, naam: str | None = None, open_entiteit: str | None = None, wie: str = "",
-                      puls_s: int | None = None, camera: str | None = None) -> dict:
+                      puls_s: int | None = None, camera: str | None = None, gezicht_live: bool | None = None) -> dict:
         d = self.deur(deur_id)
         detail = []
+        if gezicht_live is not None and bool(gezicht_live) != bool(d.get("gezicht_live")):
+            d["gezicht_live"] = bool(gezicht_live)
+            detail.append("gezichtsserver mag openen" if gezicht_live else "gezichtsserver enkel proef")
         if camera is not None and (camera or None) != d.get("camera"):
             if camera and not camera.startswith("camera."):
                 raise ToegangFout("kies een camera entiteit")
@@ -336,6 +341,9 @@ class Register:
         pin = pin_norm(pin)
         if not (PIN_MIN <= len(pin) <= PIN_MAX):
             raise ToegangFout(f"Een code heeft {PIN_MIN} tot {PIN_MAX} cijfers.")
+        if self._extern_bezet(pin):
+            raise ToegangFout("Deze code kan niet gebruikt worden. Kies een andere, minder voor de hand liggende code."
+                              if streng else "code is al in gebruik op de Akuvox (bij een gebruiker die niet uit HA komt)")
         if streng and (zwak(pin) or pin in self._pins(behalve)):
             raise ToegangFout("Deze code kan niet gebruikt worden. Kies een andere, minder voor de hand liggende code.")
         if streng and any(botst(pin, a) for a in self._pins(behalve)):
@@ -351,11 +359,15 @@ class Register:
                                   "het klavier heeft geen bevestigingstoets, kies een andere code")
         return pin
 
+    def _extern_bezet(self, pin: str) -> bool:
+        h = hashlib.sha256(f"akuvox-pin\n{pin}".encode()).hexdigest()
+        return any(h in v for v in self.extern_pins.values())
+
     def nieuwe_code(self, lengte: int = 6) -> str:
         bezet = self._pins()
         for _ in range(1000):
             c = "".join(secrets.choice("0123456789") for _ in range(lengte))
-            if not zwak(c) and not any(c == b or botst(c, b) for b in bezet):
+            if not zwak(c) and not self._extern_bezet(c) and not any(c == b or botst(c, b) for b in bezet):
                 return c
         raise ToegangFout("kon geen vrije code maken")
 
@@ -538,15 +550,17 @@ class Register:
     def deblokkeren(self, wie: str, pid: str, actie: str = "gedeblokkeerd", respect_start: bool = False) -> dict:
         p = self.persoon(pid)
         nu = _nu()
+        if p["status"] == "retired" and actie != "hersteld":
+            raise ToegangFout(f"{p['naam']} is uit dienst: gebruik Herstellen")
+        vu0 = tijdstip(p.get("valid_until"))
+        if vu0 and vu0 <= nu:
+            raise ToegangFout(f"De geldigheid van {p['naam']} liep af op {_kort(vu0)}. Kies eerst een nieuwe einddatum.")
         vf = tijdstip(p.get("valid_from"))
         if respect_start and vf and vf > nu:
             p["status"], p["until"] = "blocked", p["valid_from"]
             self.audit(wie, actie, p["naam"], p["deuren"], f"wacht op het begin, tot {_kort(vf)}")
         else:
             p["valid_from"] = None
-            vu = tijdstip(p.get("valid_until"))
-            if vu and vu <= nu:
-                p["valid_until"] = None
             p["status"], p["until"] = "active", None
             self.audit(wie, actie, p["naam"], p["deuren"])
         p["gewijzigd"] = _iso(nu)
@@ -557,6 +571,10 @@ class Register:
         p = self.persoon(pid)
         p["status"], p["until"] = "retired", None
         p["gewijzigd"] = _iso(_nu())
+        p["portaal_hash"] = p["portaal_token"] = None
+        for k, v in list(self.__dict__.get("_sessies", {}).items()):
+            if v["pid"] == p["id"]:
+                del self._sessies[k]
         if p.get("gezicht"):
             p["gezicht"] = None
             reden = ", ".join(x for x in (reden, "gezichtsafdruk gewist") if x)
@@ -564,7 +582,14 @@ class Register:
         self.gewijzigd()
         return p
 
-    def herstellen(self, wie: str, pid: str) -> dict:
+    def herstellen(self, wie: str, pid: str, valid_until: Any = None) -> dict:
+        """Uit dienst terug actief. Was de geldigheid verlopen, dan is een nieuwe einddatum verplicht."""
+        p = self.persoon(pid)
+        if valid_until:
+            vu = tijdstip(valid_until)
+            if not vu or vu <= _nu():
+                raise ToegangFout("De nieuwe einddatum moet in de toekomst liggen.")
+            p["valid_until"] = _iso(vu)
         return self.deblokkeren(wie, pid, actie="hersteld", respect_start=True)
 
     def vergeten(self, wie: str, pid: str) -> None:
@@ -671,7 +696,7 @@ class Register:
                 continue
             gezien.add(t["pubkey_id"])
             uit.append({"pubkey_id": t["pubkey_id"], "pubkey": t["pubkey"], "tablet": t["naam"], "soort": t.get("soort", "tablet"),
-                        "deur": deur})
+                        "deur": deur, "eigen_deur": t["deur_id"] in p["deuren"]})
         return uit
 
     # ------------------------------------------------------------------ doorzetten door de gezichtsserver
@@ -686,7 +711,9 @@ class Register:
             g = p.get("gezicht")
             if not g or p["status"] == "retired" or kid not in g["sleutels"]:
                 continue
-            doel = [{"pubkey_id": t["pubkey_id"], "pubkey": t["pubkey"]} for t in self.gezicht_tablets(p) if t["pubkey_id"] not in g["sleutels"]]
+            # enkel naar toestellen aan deuren van deze persoon (een tweede gezichtsserver als bewaarder krijgt niets)
+            doel = [{"pubkey_id": t["pubkey_id"], "pubkey": t["pubkey"], "soort": t["soort"]} for t in self.gezicht_tablets(p)
+                    if t["pubkey_id"] not in g["sleutels"] and t.get("eigen_deur")]
             if doel:
                 taken.append({"persoon_id": p["id"], "sleutel": g["sleutels"][kid], "aad": GEZICHT_AAD + p["id"], "doel": doel})
         return taken
@@ -697,7 +724,7 @@ class Register:
         p = self.data["personen"].get(persoon_id)
         if server.get("soort") != "server" or not p or not p.get("gezicht") or kid not in p["gezicht"]["sleutels"]:
             raise ToegangFout("onbekende afdruk")
-        mag = {t["pubkey_id"] for t in self.gezicht_tablets(p)}
+        mag = {t["pubkey_id"] for t in self.gezicht_tablets(p) if t.get("eigen_deur")}
         nieuw = 0
         for doel, s in (sleutels or {}).items():
             if doel not in mag or doel in p["gezicht"]["sleutels"]:
@@ -714,6 +741,8 @@ class Register:
         return nieuw
 
     def gezicht_zetten(self, p: dict, huidige_pin: str, pakket: dict, vertrouwd: bool = False) -> dict:
+        if not self._portaal_mag(p):
+            raise ToegangFout("Je toegang is nu niet actief.")
         if not vertrouwd:
             self._portaal_controle(p, huidige_pin)
         if p["status"] == "retired":
@@ -747,13 +776,38 @@ class Register:
             raise ToegangFout("Je huidige code klopt niet.")
         p["fouten"] = 0
 
-    def _pubkey_zetten(self, t: dict, waarde) -> None:
+    def _pubkey_zetten(self, t: dict, waarde, bij_koppelen: bool = False) -> None:
+        """Publieke sleutel van een toestel. Bij het koppelen (met koppelcode van de beheerder) meteen; een latere
+        wissel wacht op goedkeuring in HA, anders kan wie een tabletsleutel steelt alle gezichten laten doorzetten."""
         try:
             der, kid = publieke_sleutel(waarde)
         except GezichtFout as e:
             raise ToegangFout(str(e)) from e
         if t.get("pubkey_id") == kid:
+            t.pop("pubkey_wacht", None)
             return
+        if t.get("pubkey") and not bij_koppelen:
+            if (t.get("pubkey_wacht") or {}).get("pubkey_id") != kid:
+                t["pubkey_wacht"] = {"pubkey": der, "pubkey_id": kid, "sinds": _iso(_nu())}
+                from homeassistant.components import persistent_notification
+                persistent_notification.async_create(
+                    self.hass, f"{'Gezichtsserver' if t.get('soort') == 'server' else 'Tablet'} **{t['naam']}** stuurt een nieuwe sleutel "
+                    f"(begint met {kid[:16]}). Keur die enkel goed als je het toestel zelf opnieuw instelde: Deuren, Sleutel goedkeuren.",
+                    title="Btechnics Toegang: nieuwe toestelsleutel", notification_id=f"{DOMAIN}_sleutel_{t['id']}")
+                self.audit("tablet", "tablet sleutel", self.data["deuren"].get(t["deur_id"], {}).get("naam", "?"),
+                           soort="deur", detail=f"{t['naam']}: nieuwe sleutel wacht op goedkeuring")
+                self._bewaar()
+            raise ToegangFout("nieuwe sleutel wacht op goedkeuring in HA")
+        self._pubkey_toepassen(t, der, kid)
+
+    def sleutel_goedkeuren(self, tablet_id: str, wie: str = "") -> None:
+        t = self.data["tablets"].get(tablet_id)
+        if not t or not t.get("pubkey_wacht"):
+            raise ToegangFout("Er wacht geen nieuwe sleutel voor dit toestel")
+        w = t.pop("pubkey_wacht")
+        self._pubkey_toepassen(t, w["pubkey"], w["pubkey_id"], wie)
+
+    def _pubkey_toepassen(self, t: dict, der: str, kid: str, wie: str = "tablet") -> None:
         t["pubkey"], t["pubkey_id"], t["pubkey_sinds"] = der, kid, _iso(_nu())
         # wie al een gezicht had, mist het nu op deze tablet: melden (Work mailt dan de portaallink om opnieuw te scannen)
         servers = {x["pubkey_id"] for x in self.data["tablets"].values() if x.get("soort") == "server" and x.get("pubkey_id") and x is not t}
@@ -772,13 +826,13 @@ class Register:
                 f"{', '.join(p['naam'] for p in missen)}. Zij scannen opnieuw via hun portaallink "
                 "(Btechnics Work stuurt die automatisch voor gekoppelde medewerkers).",
                 title="Btechnics Toegang: opnieuw scannen", notification_id=f"{DOMAIN}_gezicht_{t['id']}")
-        self.audit("tablet", "tablet sleutel", self.data["deuren"].get(t["deur_id"], {}).get("naam", "?"),
+        self.audit(wie, "tablet sleutel", self.data["deuren"].get(t["deur_id"], {}).get("naam", "?"),
                    soort="deur", detail=f"{t['naam']}: nieuwe sleutel voor gezichtsafdrukken")
         self.gewijzigd()
 
     # ------------------------------------------------------------------ tablets
 
-    def koppelcode_maken(self, deur_id: str, naam: str | None = None) -> str:
+    def koppelcode_maken(self, deur_id: str, naam: str | None = None, soort: str = "tablet") -> str:
         self.deur(deur_id)
         nu = time.monotonic()
         self._koppelcodes = {c: v for c, v in self._koppelcodes.items() if v["tot"] > nu}
@@ -786,7 +840,8 @@ class Register:
             code = f"{secrets.randbelow(1_000_000):06d}"
             if code not in self._koppelcodes:
                 break
-        self._koppelcodes[code] = {"deur_id": deur_id, "naam": naam, "tot": nu + KOPPELCODE_GELDIG}
+        self._koppelcodes[code] = {"deur_id": deur_id, "naam": naam, "tot": nu + KOPPELCODE_GELDIG,
+                                   "soort": "server" if soort == "server" else "tablet"}
         self._foute_koppelpogingen = 0
         return code
 
@@ -795,7 +850,8 @@ class Register:
         """soort "server": de gezichtsserver (container op Unraid) voor een deur met camera. Die gebruikt dezelfde
         endpoints als een tablet (/lijst, /wacht, /status, /open met methode gezicht, /foto)."""
         nu = time.monotonic()
-        info = self._koppelcodes.get(str(code).strip())
+        code = str(code).strip()
+        info = self._koppelcodes.get(code)
         if not info or info["tot"] < nu:
             self._foute_koppelpogingen += 1
             if self._foute_koppelpogingen >= KOPPELCODE_POGINGEN:
@@ -803,11 +859,14 @@ class Register:
                 self._foute_koppelpogingen = 0
             raise ToegangFout("Koppelcode ongeldig of vervallen")
         del self._koppelcodes[code]
+        # het soort kiest de beheerder bij de koppelcode, niet het toestel
+        if (soort or "tablet") != info["soort"]:
+            raise ToegangFout("Deze koppelcode is voor een " + ("gezichtsserver" if info["soort"] == "server" else "tablet"))
+        soort = info["soort"]
         for tid, t in list(self.data["tablets"].items()):
-            if toestel_id and t.get("toestel_id") == toestel_id:
+            if toestel_id and t.get("toestel_id") == toestel_id and t["deur_id"] == info["deur_id"]:
                 del self.data["tablets"][tid]
         sleutel = secrets.token_urlsafe(32)
-        soort = "server" if soort == "server" else "tablet"
         standaard = "Gezichtsserver" if soort == "server" else "Tablet"
         t = {"id": _id("t"), "soort": soort, "deur_id": info["deur_id"], "naam": (naam or info["naam"] or standaard).strip()[:60],
              "toestel_id": toestel_id or None, "sleutel_hash": sleutel_hash(sleutel), "gekoppeld": _iso(_nu()),
@@ -815,7 +874,7 @@ class Register:
         self.data["tablets"][t["id"]] = t
         if pubkey:
             try:
-                self._pubkey_zetten(t, pubkey)
+                self._pubkey_zetten(t, pubkey, bij_koppelen=True)
             except ToegangFout:
                 pass  # koppelen lukt toch; de tablet krijgt de fout bij /status
         self.audit("tablet", "gezichtsserver gekoppeld" if soort == "server" else "tablet gekoppeld",
@@ -938,24 +997,36 @@ class Register:
         except (TypeError, ValueError) as e:
             raise ToegangFout("Deze link is niet geldig.") from e
         nu = time.time()
+        s = str(s or "").strip().lower()
         verwacht = hmac.new(geheim.encode(), f"{werk_id}.{tot}".encode(), hashlib.sha256).hexdigest()
-        if not s or not secrets.compare_digest(verwacht, str(s).lower()):
+        if not s or not secrets.compare_digest(verwacht, s):
             raise ToegangFout("Deze link is niet geldig.")
         if not nu <= tot <= nu + self.WERK_LINK_MAX:
             raise ToegangFout("Deze link is verlopen. Open hem opnieuw vanuit Work.")
-        gebruikt = self.__dict__.setdefault("_werk_gebruikt", {})
+        # gebruikte links bewaren (ook over een herstart heen), op werk_id en vervaltijd
+        gebruikt = self.data.setdefault("werklinks", {})
         for k in [k for k, v in gebruikt.items() if v < nu]:
             del gebruikt[k]
-        if s in gebruikt:
+        sleutel = f"{werk_id}.{tot}"
+        if sleutel in gebruikt:
             raise ToegangFout("Deze link werd al gebruikt. Open hem opnieuw vanuit Work.")
-        p = next((x for x in self.data["personen"].values() if x.get("werk_id") == werk_id and x["status"] != "retired"), None)
+        p = next((x for x in self.data["personen"].values() if x.get("werk_id") == werk_id and self._portaal_mag(x)), None)
         if not p:
-            raise ToegangFout("Je hebt nog geen toegang. Vraag het aan je verantwoordelijke.")
-        gebruikt[s] = tot
+            raise ToegangFout("Je hebt nu geen toegang. Vraag het aan je verantwoordelijke.")
+        gebruikt[sleutel] = tot
+        self._bewaar()
         token = secrets.token_urlsafe(24)
-        self.__dict__.setdefault("_sessies", {})[token_hash(token)] = {"pid": p["id"], "tot": nu + self.WERK_SESSIE}
+        sessies = self.__dict__.setdefault("_sessies", {})
+        for k in [k for k, v in sessies.items() if v["tot"] < nu]:
+            del sessies[k]
+        sessies[token_hash(token)] = {"pid": p["id"], "tot": nu + self.WERK_SESSIE}
         p["fouten"] = 0
         return token
+
+    @staticmethod
+    def _portaal_mag(p: dict) -> bool:
+        """Actief, of geblokkeerd enkel omdat de geldigheid nog moet beginnen."""
+        return p["status"] == "active" or (p["status"] == "blocked" and p.get("until") and p.get("until") == p.get("valid_from"))
 
     def portaal_vertrouwd(self, token: str) -> bool:
         """True als de link van een sessie uit Work komt: dan geen huidige code nodig."""
@@ -967,13 +1038,14 @@ class Register:
         h = token_hash(token)
         sessie = self.__dict__.get("_sessies", {}).get(h)
         if sessie and sessie["tot"] > time.time() and sessie["pid"] in self.data["personen"]:
-            return "persoon", self.data["personen"][sessie["pid"]]
+            p = self.data["personen"][sessie["pid"]]
+            return ("persoon", p) if self._portaal_mag(p) else None
         for u in self.data["uitnodigingen"].values():
             if secrets.compare_digest(u["hash"], h):
                 return "uitnodiging", u
         for p in self.data["personen"].values():
             if p.get("portaal_hash") and secrets.compare_digest(p["portaal_hash"], h):
-                return "persoon", p
+                return ("persoon", p) if p["status"] != "retired" else None
         return None
 
     def uitnodiging_bruikbaar(self, u: dict) -> str | None:
@@ -1024,17 +1096,39 @@ class Register:
     def portaal_wijzigen(self, p: dict, huidige_pin: str, *, telefoon: str | None = None, email: str | None = None,
                          nieuwe_pin: str | None = None, vertrouwd: bool = False) -> dict:
         """Wijziging vanuit het eigen portaal: met de huidige code, of zonder als de medewerker via Work kwam."""
+        if not self._portaal_mag(p):
+            raise ToegangFout("Je toegang is nu niet actief. Vraag het aan je verantwoordelijke.")
         if not vertrouwd:
             self._portaal_controle(p, huidige_pin)
         wie = f"{p['naam']} (portaal)"
         if nieuwe_pin:
-            nieuw = self.controleer_pin(nieuwe_pin, behalve=p["id"], streng=True)
+            nieuw = self._nieuwe_pin_portaal(p, nieuwe_pin)
             if nieuw != p["pin"]:
                 self._pin_zetten(p, nieuw)
                 self.audit(wie, "aangepast", p["naam"], p["deuren"], "code gewijzigd")
         self.bijwerken(wie, p["id"], telefoon=telefoon, email=email)
         self.gewijzigd()
         return p
+
+    PIN_POGINGEN_MAX = 5   # geweigerde nieuwe codes per uur in het portaal (anders kan men codes van anderen afleiden)
+
+    def _nieuwe_pin_portaal(self, p: dict, nieuwe_pin: str) -> str:
+        nu = time.time()
+        pogingen = [t for t in p.get("pin_pogingen", []) if t > nu - 3600]
+        if len(pogingen) >= self.PIN_POGINGEN_MAX:
+            raise ToegangFout("Te veel geweigerde codes. Probeer binnen een uur opnieuw, of laat je verantwoordelijke een code kiezen.")
+        try:
+            return self.controleer_pin(nieuwe_pin, behalve=p["id"], streng=True)
+        except ToegangFout:
+            p["pin_pogingen"] = pogingen + [nu]
+            if len(p["pin_pogingen"]) >= self.PIN_POGINGEN_MAX:
+                from homeassistant.components import persistent_notification
+                persistent_notification.async_create(
+                    self.hass, f"**{p['naam']}** probeerde in het portaal {self.PIN_POGINGEN_MAX} keer een code die niet kan. "
+                    "Nieuwe codes kiezen is een uur geblokkeerd.", title="Btechnics Toegang: portaal",
+                    notification_id=f"{DOMAIN}_pinpogingen_{p['id']}")
+            self._bewaar()
+            raise
 
     def foto_gezet(self, wie: str, pid: str) -> None:
         p = self.persoon(pid)
