@@ -17,8 +17,9 @@ VERSIE = "mfn112-arcface5-v1"
 SJABLOON = np.array([[38.2946, 51.6963], [73.5318, 51.5014], [56.0252, 71.7366], [41.5493, 92.3655], [70.7299, 92.2041]],
                     dtype=np.float64)
 OGEN, NEUS, MOND = (468, 473), 2, (61, 291)
-# punten voor de vormvergelijking bij naderen (3D controle): neus, ogen, wenkbrauwen, mond, kaaklijn
-VORM = [1, 2, 4, 5, 6, 10, 33, 61, 93, 133, 152, 168, 197, 234, 263, 291, 323, 362, 454, 105, 334, 70, 300, 172, 397, 58, 288]
+# punten voor de vormvergelijking bij naderen (3D controle): enkel rigide punten, geen mond of kaak (die bewegen bij praten).
+# ooghoeken 33, 133, 362, 263; neusbrug 6, 168; neuspunt 1, 4; neusvleugels 129, 358; voorhoofd 10
+VORM = [33, 133, 362, 263, 6, 168, 1, 4, 129, 358, 10]
 
 
 @dataclass
@@ -61,11 +62,21 @@ def scherpte(invoer: np.ndarray) -> float:
 
 
 def vorm_afwijking(a: np.ndarray, b: np.ndarray) -> float:
-    """Restfout na gelijkvormigheid tussen twee puntenwolken (2D), relatief tot de grootte.
-    Een vlakke foto die dichterbij komt blijft gelijkvormig (rest = ruis); een echt hoofd vervormt door het perspectief."""
-    m = gelijkvormig(a, b)
-    a2 = a @ m[:, :2].T + m[:, 2]
+    """Restfout na een homografie tussen twee puntenwolken (2D), relatief tot de grootte.
+    Elk vlak (foto, scherm), ook schuin gehouden of gekanteld, wordt door een homografie volledig verklaard (rest = ruis);
+    een echt hoofd heeft diepte (neus voor de ogen) en vervormt bij naderen op een manier die geen homografie kan volgen.
+    Geeft nan als er geen homografie te vinden is (de aanroeper telt dat dan niet als bewijs)."""
+    a = np.asarray(a, np.float64).reshape(-1, 2)
+    b = np.asarray(b, np.float64).reshape(-1, 2)
+    if len(a) < 5 or len(a) != len(b):
+        return float("nan")
+    hm, _ = cv2.findHomography(a, b, 0)
+    if hm is None or not np.all(np.isfinite(hm)):
+        return float("nan")
+    a2 = cv2.perspectiveTransform(a.reshape(-1, 1, 2), hm).reshape(-1, 2)
     schaal = np.sqrt(((b - b.mean(0)) ** 2).sum(1).mean())
+    if not np.isfinite(schaal) or schaal <= 0:
+        return float("nan")
     return float(np.sqrt(((a2 - b) ** 2).sum(1).mean()) / schaal)
 
 

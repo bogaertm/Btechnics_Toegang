@@ -37,6 +37,12 @@ def nu_iso() -> str:
     return datetime.now().astimezone().replace(microsecond=0).isoformat()
 
 
+def controleer(r) -> None:
+    """Fout bij alles behalve 2xx; ook een omleiding (3xx) telt als fout, want die wordt nooit gevolgd."""
+    if not 200 <= r.status_code < 300:
+        raise requests.HTTPError(f"http {r.status_code}", response=r)
+
+
 def certificaat_sha256(url: str) -> str:
     """sha256 van het certificaat dat HA nu toont (enkel bij de eerste koppeling, daarna vast)."""
     from urllib.parse import urlparse
@@ -67,9 +73,31 @@ class Vingerafdruk(HTTPAdapter):
         super().cert_verify(conn, url, False, cert)
 
 
+class GeenOmleiding(requests.Session):
+    """Sessie die nooit een omleiding volgt: de sleutel (Bearer) mag nergens anders heen dan naar HA zelf."""
+
+    def __init__(self):
+        super().__init__()
+        self.max_redirects = 0
+
+    def request(self, method, url, **kw):
+        kw["allow_redirects"] = False
+        return super().request(method, url, **kw)
+
+
+def schrijf_prive(pad: Path, inhoud: bytes) -> None:
+    """Bestand meteen met rechten 0600 aanmaken (nooit even leesbaar voor anderen)."""
+    fd = os.open(pad, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "wb") as f:
+        f.write(inhoud)
+    os.chmod(pad, 0o600)
+
+
 class HA:
     def __init__(self, url: str, data: Path, naam: str, app_versie: str):
         self.url = url.rstrip("/")
+        if not self.url.startswith("https://"):
+            raise SystemExit("HA_URL moet https zijn (bv. https://192.168.1.117:8443)")
         self.data = data
         self.naam = naam
         self.app_versie = app_versie
@@ -80,7 +108,7 @@ class HA:
         der = self.sleutel.public_key().public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
         self.pubkey = base64.b64encode(der).decode()
         self.pubkey_id = hashlib.sha256(der).hexdigest()
-        self.sessie = requests.Session()
+        self.sessie = GeenOmleiding()
         self.sessie.verify = False   # zelf ondertekend certificaat; Vingerafdruk controleert het vastgezette certificaat
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
         if self.staat.get("https_sha256"):
@@ -94,6 +122,9 @@ class HA:
         self._slot = threading.Lock()
         self.bij_lijst = None
         self.bij_fotovraag = None
+        self.stats = {"ontsleutel_fouten": 0, "doorgezet": 0, "open_geweigerd": 0, "open_fout": 0}
+        self._fout_versie = None        # lijstversie waarvoor ontsleutelfouten al gemeld zijn
+        self._gemeld: dict[str, float] = {}   # beperking van systeemmeldingen per soort
 
     # ------------------------------------------------------------------ sleutel en koppelen
 
@@ -102,14 +133,12 @@ class HA:
         if pad.exists():
             return serialization.load_pem_private_key(pad.read_bytes(), password=None)
         k = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-        pad.write_bytes(k.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
-        os.chmod(pad, 0o600)
+        schrijf_prive(pad, k.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
         return k
 
     def _bewaar(self):
         tmp = self.staat_pad.with_suffix(".tmp")
-        tmp.write_text(json.dumps(self.staat, indent=1))
-        os.chmod(tmp, 0o600)
+        schrijf_prive(tmp, json.dumps(self.staat, indent=1).encode())
         tmp.replace(self.staat_pad)
 
     @property
@@ -147,10 +176,11 @@ class HA:
         r = self.sessie.get(self.url + API + "/lijst", headers=kop, timeout=20)
         if r.status_code == 304:
             return False
-        r.raise_for_status()
+        controleer(r)
         self.etag = r.headers.get("ETag")
         lijst = r.json()
         personen = {}
+        fout = []
         for p in lijst.get("personen", []):
             gz = p.get("gezicht")
             if not gz:
@@ -159,6 +189,14 @@ class HA:
                 personen[p["id"]] = {"naam": p["naam"], "afdrukken": self.ontsleutel(gz), "schema": p.get("schema") or []}
             except Exception as e:  # noqa: BLE001
                 LOG.warning("gezicht van %s niet leesbaar: %s", p.get("naam"), e)
+                fout.append(p.get("naam") or p.get("id") or "?")
+        if fout:
+            self.stats["ontsleutel_fouten"] += len(fout)
+            versie = lijst.get("versie", 0)
+            if self._fout_versie != versie:
+                self._fout_versie = versie
+                self.log("systeem", tekst=f"Gezichtsserver: gezicht van {len(fout)} persoon/personen niet leesbaar "
+                                          f"(lijst versie {versie}): {', '.join(fout)}. Opnieuw scannen nodig.")
         with self._slot:
             self.lijst, self.personen, self.versie = lijst, personen, lijst.get("versie", 0)
             self.laatste_lijst = nu_iso()
@@ -185,28 +223,54 @@ class HA:
         """Afdrukken doorzetten naar nieuwe toestellen of deuren: AES sleutel uitpakken met de eigen sleutel en
         verpakken voor de publieke sleutel van elk doel. De afdrukken zelf blijven onaangeroerd in HA."""
         r = self.sessie.get(self.url + API + "/herverpak", headers=self._kop(), timeout=20)
-        r.raise_for_status()
+        controleer(r)
         n = 0
         for tk in r.json().get("taken") or []:
             try:
                 aes = self.sleutel.decrypt(base64.b64decode(tk["sleutel"]), OAEP)
                 sleutels = {}
-                for d in tk["doel"]:
-                    der = base64.b64decode(d["pubkey"])
-                    if hashlib.sha256(der).hexdigest() != d["pubkey_id"]:
-                        continue
-                    pub = serialization.load_der_public_key(der)
-                    sleutels[d["pubkey_id"]] = base64.b64encode(pub.encrypt(aes, OAEP)).decode()
+                for d in tk.get("doel") or []:
+                    try:
+                        sleutels.update(self._verpak_voor(d, aes))
+                    except Exception as e:  # noqa: BLE001
+                        LOG.warning("doel %s overgeslagen: %s", str(d.get("pubkey_id", "?"))[:16], e)
                 if sleutels:
                     a = self.sessie.post(self.url + API + "/herverpak", headers=self._kop(), timeout=20,
                                          json={"persoon_id": tk["persoon_id"], "sleutels": sleutels})
-                    a.raise_for_status()
-                    n += a.json().get("nieuw", 0)
+                    controleer(a)
+                    nieuw = int(a.json().get("nieuw", 0) or 0)
+                    n += nieuw
+                    if nieuw:
+                        self.stats["doorgezet"] += nieuw
+                        self.log("systeem", tekst=f"Afdruk doorgezet naar {nieuw} toestel(len)")
             except Exception as e:  # noqa: BLE001
                 LOG.warning("doorzetten voor %s: %s", tk.get("persoon_id"), e)
         if n:
             LOG.info("%d afdruk(ken) doorgezet naar nieuwe toestellen", n)
         return n
+
+    @staticmethod
+    def _verpak_voor(d: dict, aes: bytes) -> dict:
+        """AES sleutel verpakken voor een doel. Enkel tablets met een RSA sleutel van minstens 2048 bit;
+        nooit naar een andere server (soort server)."""
+        if (d.get("soort") or "").lower() == "server":
+            raise ValueError("doel is een server, nooit doorzetten")
+        der = base64.b64decode(d["pubkey"])
+        if hashlib.sha256(der).hexdigest() != d["pubkey_id"]:
+            raise ValueError("pubkey_id past niet bij de sleutel")
+        pub = serialization.load_der_public_key(der)
+        if not isinstance(pub, rsa.RSAPublicKey) or pub.key_size < 2048:
+            raise ValueError("geen RSA sleutel van minstens 2048 bit")
+        return {d["pubkey_id"]: base64.b64encode(pub.encrypt(aes, OAEP)).decode()}
+
+    def systeem_beperkt(self, soort: str, tekst: str, per_s: float = 300.0) -> bool:
+        """Systeemmelding naar HA, hoogstens een per soort per per_s seconden."""
+        nu = time.monotonic()
+        if nu - self._gemeld.get(soort, -1e9) < per_s:
+            return False
+        self._gemeld[soort] = nu
+        self.log("systeem", tekst=tekst)
+        return True
 
     # ------------------------------------------------------------------ lussen
 
@@ -228,6 +292,9 @@ class HA:
                 elif r.status_code == 401:
                     LOG.error("HA kent deze server niet meer (ontkoppeld?). Wis /data/staat.json en koppel opnieuw.")
                     stop.wait(300)
+                elif r.status_code != 204:   # 204 = niets nieuws binnen de wachttijd
+                    LOG.warning("wacht: http %s", r.status_code)
+                    stop.wait(10)
                 fouten = 0
             except Exception as e:  # noqa: BLE001
                 fouten += 1
@@ -255,13 +322,30 @@ class HA:
     # ------------------------------------------------------------------ acties
 
     def openen(self, persoon_id: str, score: float) -> tuple[bool, str | None]:
-        r = self.sessie.post(self.url + API + "/open", headers=self._kop(), timeout=15,
-                             json={"methode": "gezicht", "persoon_id": persoon_id, "log": False, "score": round(score, 3)})
+        """HA vragen te openen. Geeft (geopend, reden). Nooit een uitzondering: HA onbereikbaar = (False, 'onbereikbaar')."""
+        try:
+            r = self.sessie.post(self.url + API + "/open", headers=self._kop(), timeout=15,
+                                 json={"methode": "gezicht", "persoon_id": persoon_id, "log": False, "score": round(score, 3)})
+        except requests.RequestException as e:
+            self.stats["open_fout"] += 1
+            LOG.warning("openen: HA onbereikbaar: %s", e)
+            self.systeem_beperkt("onbereikbaar", "Gezichtsserver: HA onbereikbaar bij openen")
+            return False, "onbereikbaar"
         try:
             a = r.json()
         except ValueError:
             a = {}
-        return bool(a.get("geopend")), a.get("reden") or a.get("tekst")
+        if not isinstance(a, dict):
+            a = {}
+        reden = a.get("reden") or a.get("tekst")
+        geopend = r.status_code == 200 and bool(a.get("geopend"))
+        if not geopend:
+            soort = "open_geweigerd" if r.status_code in (200, 403) else "open_fout"
+            self.stats[soort] += 1
+            reden = reden or f"http {r.status_code}"
+            LOG.warning("openen: HA opende niet (http %s): %s", r.status_code, reden)
+            self.systeem_beperkt(soort, f"Gezichtsserver: HA opende niet (http {r.status_code}, {reden})")
+        return geopend, reden
 
     def log(self, soort: str, **velden) -> None:
         with self._slot:
@@ -276,7 +360,7 @@ class HA:
             return
         try:
             r = self.sessie.post(self.url + API + "/log", headers=self._kop(), json={"items": items}, timeout=15)
-            r.raise_for_status()
+            controleer(r)
             ok = set(r.json().get("ontvangen") or [])
             with self._slot:
                 self.wachtrij = [i for i in self.wachtrij if i["uid"] not in ok]
@@ -301,4 +385,3 @@ def wacht_tot(stop: threading.Event, functie, omschrijving: str) -> None:
             fouten += 1
             LOG.warning("%s: %s", omschrijving, e)
             stop.wait(min(60, 5 * fouten))
-    time.sleep(0)
