@@ -36,13 +36,6 @@ class AkuvoxFout(Exception):
     pass
 
 
-VELDEN_VERSIE = 3   # verhogen als de velden naar het toestel veranderen: dan zet de sync iedereen opnieuw
-
-
-def _pinhash(naam: str, pin: str) -> str:
-    return hashlib.sha256(f"{naam}\n{pin}\n{VELDEN_VERSIE}".encode()).hexdigest()[:16]
-
-
 def optie_prefix(nr: int) -> str:
     """Toestel 1 gebruikt de oude sleutels (akuvox_ip, ...), toestel 2 akuvox2_ip, ..."""
     return "akuvox_" if nr == 1 else f"akuvox{nr}_"
@@ -69,6 +62,7 @@ class Akuvox:
         self.status: dict[str, Any] = {"aan": self.aan, "ok": None, "fout": None, "laatst": None, "eigen": 0,
                                        "toestel": 0, "vreemd_boven_start": 0, "velden": None}
         self._lock = asyncio.Lock()
+        self.reg.extern_pins[f"akuvox{nr}"] = set(self._staat.get("vreemde_pins") or [])
 
     # ------------------------------------------------------------------ opslag
 
@@ -99,17 +93,21 @@ class Akuvox:
         return j
 
     async def gebruikers(self) -> list[dict]:
-        uit, pagina = [], 1
-        while pagina < 50:
+        """Alle gebruikers, pagina per pagina tot er niets nieuws meer komt (ook als het toestel 'num' anders invult
+        of de paginaparameter negeert)."""
+        uit: dict[str, dict] = {}
+        for pagina in range(1, 51):
             j = await self._vraag("GET", f"/api/user/get?page={pagina}")
-            data = j.get("data") or {}
-            items = data.get("item") or []
-            uit += [x for x in items if isinstance(x, dict)]
-            totaal = int(data.get("num") or len(uit))
-            if not items or len(uit) >= totaal:
+            items = [x for x in ((j.get("data") or {}).get("item") or []) if isinstance(x, dict)]
+            nieuw = 0
+            for x in items:
+                k = str(x.get("ID") or x.get("UserID") or len(uit))
+                if k not in uit:
+                    uit[k] = x
+                    nieuw += 1
+            if not items or not nieuw:
                 break
-            pagina += 1
-        return uit
+        return list(uit.values())
 
     async def _schrijf(self, actie: str, items: list[dict]) -> dict:
         return await self._vraag("POST", f"/api/user/{actie}", {"target": "user", "action": actie, "data": {"item": items}})
@@ -126,10 +124,40 @@ class Akuvox:
             uit[p["id"]] = {"naam": p["naam"][:63], "pin": p["pin"]}
         return uit
 
+    @staticmethod
+    def afwijkingen(dev: dict, w: dict) -> list[str]:
+        """Wat er op het toestel anders staat dan nodig om met relais 1 altijd te mogen openen."""
+        fout = []
+        if str(dev.get("Name") or "") != w["naam"]:
+            fout.append("naam")
+        pin = dev.get("PrivatePIN")
+        if pin not in (None, "") and "*" not in str(pin) and str(pin) != w["pin"]:
+            fout.append("code")
+        sr = str(dev.get("ScheduleRelay") or dev.get("Schedule-Relay") or "")
+        delen = [x for x in sr.split(";") if x]
+        if not any(x.startswith(f"{SCHEDULE_ALTIJD}-") and "1" in x.split("-", 1)[1] for x in delen):
+            fout.append(f"schema/relais leeg of fout ({sr or 'leeg'})")
+        perm = dev.get("RelayScheduleActivationPermission")
+        if perm is not None and "1" not in str(perm):
+            fout.append(f"relaisrecht ({perm or 'leeg'})")
+        return fout
+
+    @staticmethod
+    def _is_van_ons(dev: dict, info: dict) -> bool:
+        """Staat er op die UserID echt onze gebruiker? Zelfde toestel-ID of zelfde naam. Anders nooit aanraken."""
+        if info.get("dev_id") and str(dev.get("ID")) == str(info["dev_id"]):
+            return True
+        return str(dev.get("Name") or "") == str(info.get("naam") or "")
+
+    @staticmethod
+    def _pin_h(pin: str) -> str:
+        return hashlib.sha256(f"akuvox-pin\n{pin}".encode()).hexdigest()
+
     # ------------------------------------------------------------------ sync
 
     async def async_sync(self) -> dict:
-        """Brengt het toestel in lijn. Geeft een verslag terug: toegevoegd, gewijzigd, gewist, fouten."""
+        """Brengt het toestel in lijn en CONTROLEERT daarna op het toestel zelf of alles echt staat zoals nodig.
+        Status ok is enkel waar als die controle slaagt. Verslag: toegevoegd, gewijzigd, gewist, fouten."""
         if not self.aan:
             return {"aan": False}
         async with self._lock:
@@ -142,62 +170,109 @@ class Akuvox:
             staat = self._staat
             eigen = staat["gebruikers"]
             per_userid = {str(x.get("UserID")): x for x in lijst}
-            relay_veld = next((k for x in lijst for k in x if k.replace("-", "").lower() == "schedulerelay"), "ScheduleRelay")
             self.status["velden"] = sorted({k for x in lijst for k in x})[:40]
             gewenst = self._gewenst(dt_util.now())
-            gewijzigd_register = False
+            geschreven = False
 
-            # weg: van ons, maar niet meer gewenst. De UserID blijft aan de persoon gekoppeld (zelfde nummer later en
-            # in de deurlog); enkel als de persoon niet meer bestaat, verdwijnt de koppeling.
+            # koppelingen die niet (meer) naar onze gebruiker wijzen loslaten: nooit een vreemde wissen of overschrijven
+            for pid, info in list(eigen.items()):
+                dev = per_userid.get(str(info.get("userid")))
+                if dev is not None and not self._is_van_ons(dev, info):
+                    _LOGGER.warning("Akuvox %s: UserID %s is niet (meer) van %s, koppeling losgelaten", self.nr, info["userid"],
+                                    info.get("naam", pid))
+                    del eigen[pid]
+                elif dev is not None:
+                    info["dev_id"] = str(dev.get("ID"))
+
+            van_ons = {str(i["userid"]) for i in eigen.values()}
+            vreemd = [x for x in lijst if str(x.get("UserID")) not in van_ons]
+            vreemde_pins = {self._pin_h(str(x["PrivatePIN"])) for x in vreemd
+                            if x.get("PrivatePIN") not in (None, "") and "*" not in str(x.get("PrivatePIN"))}
+            staat["vreemde_pins"] = sorted(vreemde_pins)
+            self.reg.extern_pins[f"akuvox{self.nr}"] = vreemde_pins
+
+            # weg: van ons, maar niet meer gewenst
             for pid, info in list(eigen.items()):
                 if pid in gewenst:
                     continue
-                dev = per_userid.get(info["userid"])
+                dev = per_userid.get(str(info["userid"]))
                 try:
-                    if dev and int(info["userid"]) >= USER_ID_START:
+                    if dev is not None and int(info["userid"]) >= USER_ID_START:
                         await self._schrijf("del", [{"ID": str(dev.get("ID"))}])
+                        geschreven = True
                         verslag["gewist"].append(info.get("naam", pid))
-                    info.pop("hash", None)
                     if pid not in self.reg.data["personen"]:
                         del eigen[pid]
-                    gewijzigd_register = True
                 except AkuvoxFout as e:
                     verslag["fouten"].append(f"wissen {info.get('naam', pid)}: {e}")
 
-            # bij of aanpassen
+            # bij of aanpassen, enkel waar het toestel afwijkt
             for pid, w in gewenst.items():
                 info = eigen.get(pid)
-                h = _pinhash(w["naam"], w["pin"])
-                # zoals de gebruikers die wel werken op de S532: schema Always op relais 1, met activatierecht en groep
-                # het toestel toont ScheduleRelay, maar aanvaardt bij add/set enkel Schedule-Relay (zoals in de API documentatie)
-                velden = {"Name": w["naam"], "PrivatePIN": w["pin"], "Schedule-Relay": f"{SCHEDULE_ALTIJD}-1;",
-                          relay_veld: f"{SCHEDULE_ALTIJD}-1;",
-                          "RelayScheduleActivationPermission": "1", "Group": "Default", "WebRelay": "0",
-                          "LiftFloorNum": "0"}
+                velden = {"Name": w["naam"], "PrivatePIN": w["pin"],
+                          # het toestel toont ScheduleRelay maar aanvaardt bij add/set enkel Schedule-Relay
+                          "Schedule-Relay": f"{SCHEDULE_ALTIJD}-1;", "ScheduleRelay": f"{SCHEDULE_ALTIJD}-1;",
+                          "RelayScheduleActivationPermission": "1", "Group": "Default", "WebRelay": "0", "LiftFloorNum": "0"}
+                dev = per_userid.get(str(info["userid"])) if info else None
                 try:
-                    if info and info["userid"] in per_userid:
-                        if info.get("hash") != h:
-                            dev = per_userid[info["userid"]]
-                            await self._schrijf("set", [{"ID": str(dev.get("ID")), "UserID": info["userid"], **velden}])
-                            info["hash"], info["naam"] = h, w["naam"]
+                    if dev is not None:
+                        if self.afwijkingen(dev, w):
+                            await self._schrijf("set", [{"ID": str(dev.get("ID")), "UserID": str(info["userid"]), **velden}])
+                            info["naam"] = w["naam"]
+                            geschreven = True
                             verslag["gewijzigd"].append(w["naam"])
-                            gewijzigd_register = True
                         continue
-                    userid = info["userid"] if info else self._nieuw_userid(per_userid)
+                    if self._pin_h(w["pin"]) in vreemde_pins:
+                        verslag["fouten"].append(f"{w['naam']}: deze code staat al bij een andere gebruiker op het toestel (SmartPlus?)")
+                        continue
+                    userid = self._nieuw_userid(per_userid)
                     await self._schrijf("add", [{"UserID": userid, **velden}])
-                    eigen[pid] = {"userid": userid, "naam": w["naam"], "hash": h}
+                    eigen[pid] = {"userid": userid, "naam": w["naam"]}
+                    geschreven = True
                     verslag["toegevoegd"].append(w["naam"])
-                    gewijzigd_register = True
                 except AkuvoxFout as e:
                     verslag["fouten"].append(f"{w['naam']}: {e}")
 
-            van_ons = {i["userid"] for i in eigen.values()}
-            self.status.update(ok=not verslag["fouten"], fout="; ".join(verslag["fouten"])[:300] or None,
-                               laatst=dt_util.utcnow().isoformat(), eigen=len(gewenst), toestel=len(lijst),
+            # controle op het toestel zelf
+            if geschreven:
+                try:
+                    lijst = await self.gebruikers()
+                    per_userid = {str(x.get("UserID")): x for x in lijst}
+                except AkuvoxFout as e:
+                    verslag["fouten"].append(f"controle na schrijven: {e}")
+            in_orde = 0
+            for pid, w in gewenst.items():
+                info = eigen.get(pid)
+                dev = per_userid.get(str(info["userid"])) if info else None
+                if dev is None:
+                    if info:
+                        verslag["fouten"].append(f"{w['naam']} staat niet op het toestel na het schrijven")
+                    continue
+                info["dev_id"] = str(dev.get("ID"))
+                afw = self.afwijkingen(dev, w)
+                if afw:
+                    verslag["fouten"].append(f"toestel nam {w['naam']} niet goed over: {', '.join(afw)}")
+                else:
+                    in_orde += 1
+            for pid, info in eigen.items():
+                dev = per_userid.get(str(info["userid"]))
+                if pid not in gewenst and dev is not None and self._is_van_ons(dev, info):
+                    verslag["fouten"].append(f"{info.get('naam', pid)} staat nog op het toestel maar heeft geen toegang meer")
+
+            van_ons = {str(i["userid"]) for i in eigen.values()}
+            fout = "; ".join(verslag["fouten"])[:400] or None
+            self.status.update(ok=not verslag["fouten"], fout=fout, laatst=dt_util.utcnow().isoformat(), eigen=in_orde,
+                               gewenst=len(gewenst), toestel=len(lijst),
                                vreemd_boven_start=sum(1 for u in per_userid if u.isdigit() and int(u) >= USER_ID_START
                                                       and u not in van_ons))
-            if gewijzigd_register:
-                self.reg._bewaar()  # noqa: SLF001  enkel opslag, de tabletlijst verandert hier niet
+            self.reg._bewaar()  # noqa: SLF001  enkel opslag, de tabletlijst verandert hier niet
+            if fout and fout != staat.get("laatste_fout"):
+                from homeassistant.components import persistent_notification
+                persistent_notification.async_create(
+                    self.hass, f"De Akuvox ({self.ip}) staat niet zoals HA het wil: {fout}",
+                    title="Btechnics Toegang: Akuvox klopt niet", notification_id=f"btechnics_toegang_akuvox{self.nr}")
+                _LOGGER.error("Akuvox %s: %s", self.nr, fout)
+            staat["laatste_fout"] = fout
             if any(verslag[k] for k in ("toegevoegd", "gewijzigd", "gewist")):
                 _LOGGER.info("Akuvox: %s", {k: v for k, v in verslag.items() if v})
             return verslag
@@ -226,17 +301,26 @@ class Akuvox:
         """Nieuwe regels van het toestel als archiefrijen (ook van gebruikers die niet van ons zijn)."""
         if not self.aan:
             return []
-        j = await self._vraag("GET", "/api/doorlog/get?page=1")
+        try:
+            j = await self._vraag("GET", "/api/doorlog/get?page=1")
+        except AkuvoxFout as e:
+            self.status.update(deurlog_ok=False, deurlog_fout=str(e))
+            raise
+        self.status.update(deurlog_ok=True, deurlog_fout=None, deurlog_laatst=dt_util.utcnow().isoformat())
         items = [x for x in ((j.get("data") or {}).get("item") or []) if isinstance(x, dict)]
         staat = self._staat
         laatste = str(staat.get("laatste_log") or "")
+        hoogste_nu = max((int(str(x.get("ID"))) for x in items if str(x.get("ID") or "").isdigit()), default=None)
+        if laatste.isdigit() and hoogste_nu is not None and hoogste_nu < int(laatste):
+            _LOGGER.warning("Akuvox %s: deurlog begon opnieuw (hoogste ID %s < %s), teller hersteld", self.nr, hoogste_nu, laatste)
+            laatste = ""
         deur = self.reg.data["deuren"].get(self.deur_id, {})
         per_userid = {i["userid"]: pid for pid, i in staat["gebruikers"].items()}
         rijen = []
         for x in items:
             sleutel = str(x.get("ID") or "")
             tijd = f"{x.get('Date', '')} {x.get('Time', '')}".strip()
-            uid = f"akuvox-{sleutel or tijd}"
+            uid = f"akuvox{'' if self.nr == 1 else self.nr}-{sleutel or tijd}"
             if laatste and sleutel.isdigit() and laatste.isdigit() and int(sleutel) <= int(laatste):
                 continue
             t = dt_util.parse_datetime(tijd.replace(" ", "T")) if tijd else None
@@ -248,6 +332,18 @@ class Akuvox:
             gelukt = str(x.get("Status") or "").lower().startswith(("succ", "ok", "open"))
             pid = per_userid.get(str(x.get("UserID") or ""))
             naam = self.reg.data["personen"].get(pid, {}).get("naam") if pid else None
+            if pid and not gelukt and laatste:
+                # het toestel herkende onze gebruiker (juiste code) maar weigerde: rechten op het toestel kloppen niet
+                from homeassistant.components import persistent_notification
+                melding = (f"De Akuvox weigerde {naam or pid} ({x.get('Type', '')}) om {tijd}, hoewel het toestel de gebruiker herkende. "
+                           "De toegangsrechten op het toestel kloppen niet; HA zet ze opnieuw.")
+                persistent_notification.async_create(self.hass, melding, title="Btechnics Toegang: Akuvox weigert eigen gebruiker",
+                                                     notification_id=f"btechnics_toegang_akuvox{self.nr}_weigert")
+                _LOGGER.error("Akuvox %s: %s", self.nr, melding)
+                self.status.update(ok=False, fout=f"toestel weigerde {naam or pid} om {tijd}")
+                for info in staat["gebruikers"].values():
+                    if str(info.get("userid")) == str(x.get("UserID")):
+                        info["dev_id"] = None   # bij de volgende sync opnieuw volledig nakijken en zetten
             rijen.append({"uid": uid, "door_id": self.deur_id, "door": deur.get("naam", "Akuvox"), "ts": int(t.timestamp()),
                           "name": naam or str(x.get("Name") or "Onbekend")[:60], "card": "",
                           "method": {"pin": "code", "kaart": "badge", "gezicht": "gezicht", "ha": "op afstand",

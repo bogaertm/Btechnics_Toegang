@@ -13,15 +13,36 @@ IP = "10.9.8.7"
 
 
 class NepAkuvox:
-    def __init__(self):
-        self.users = {"1": {"ID": "1", "Name": "Cloud Jan", "UserID": "12", "PrivatePIN": "1111", "Source": "Cloud", "Schedule-Relay": "1001-1;"},
-                      "2": {"ID": "2", "Name": "Vreemd", "UserID": "700500", "PrivatePIN": "2222", "Source": "Local", "Schedule-Relay": "1001-1;"}}
+    """Nagebootste S532 volgens contract/akuvox_s532.json: het toestel bewaart enkel velden die het kent,
+    neemt het schema enkel aan als 'Schedule-Relay' (met streepje) en toont het als 'ScheduleRelay'.
+    'ScheduleRelay' meesturen bij add/set doet niets (zo bleven onze gebruikers gisteren zonder rechten)."""
+    VELDEN = ("Name", "UserID", "PrivatePIN", "CardCode", "RelayScheduleActivationPermission", "Group", "WebRelay", "LiftFloorNum")
+
+    def __init__(self, schema_negeren=False):
+        self.users = {"1": {"ID": "1", "Name": "Cloud Jan", "UserID": "12", "PrivatePIN": "1111", "Source": "Cloud",
+                            "ScheduleRelay": "32682-12", "RelayScheduleActivationPermission": "12", "Group": "Default"},
+                      "2": {"ID": "2", "Name": "Vreemd", "UserID": "700500", "PrivatePIN": "2222", "Source": "Local",
+                            "ScheduleRelay": "1001-12;", "RelayScheduleActivationPermission": "12", "Group": "Default"}}
         self.n = 2
         self.log = []
+        self.schema_negeren = schema_negeren   # toestel dat het schema niet overneemt (zoals de fout van 18/10)
+
+    def _neem(self, doel, it):
+        for k in self.VELDEN:
+            if k in it:
+                doel[k] = str(it[k])
+        if "Schedule-Relay" in it and not self.schema_negeren:
+            doel["ScheduleRelay"] = str(it["Schedule-Relay"])
+        doel.setdefault("ScheduleRelay", "")
+        doel.setdefault("RelayScheduleActivationPermission", "")
+        doel.setdefault("Group", "")
 
     async def get(self, method, url, data):
         if url.path == "/api/user/get":
-            return AiohttpClientMockResponse(method, url, json={"retcode": 0, "data": {"num": len(self.users), "item": list(self.users.values())}})
+            pagina = int(url.query.get("page", "1"))
+            alles = list(self.users.values())
+            stuk = alles[(pagina - 1) * 2:pagina * 2]   # het echte toestel geeft per pagina een deel
+            return AiohttpClientMockResponse(method, url, json={"retcode": 0, "data": {"num": len(stuk), "item": stuk}})
         return AiohttpClientMockResponse(method, url, json={"retcode": 0, "data": {"num": len(self.log), "item": self.log}})
 
     async def post(self, method, url, data):
@@ -29,9 +50,11 @@ class NepAkuvox:
         for it in data["data"]["item"]:
             if actie == "add":
                 self.n += 1
-                self.users[str(self.n)] = {"ID": str(self.n), "Source": "Local", **it}
+                u = {"ID": str(self.n), "Source": "Local"}
+                self._neem(u, it)
+                self.users[str(self.n)] = u
             elif actie == "set":
-                self.users[it["ID"]].update(it)
+                self._neem(self.users[it["ID"]], it)
             elif actie == "del":
                 del self.users[it["ID"]]
         return AiohttpClientMockResponse(method, url, json={"retcode": 0, "message": "OK"})
@@ -64,7 +87,8 @@ async def test_akuvox_sync(hass, aioclient_mock, hass_client_no_auth):
     v = await ak.async_sync()
     assert v["toegevoegd"] == ["Jan Peeters"] and not v["fouten"]
     nieuw = [u for u in nep.users.values() if u["Name"] == "Jan Peeters"][0]
-    assert nieuw["UserID"] == "700001" and nieuw["PrivatePIN"] == "583920" and nieuw["Schedule-Relay"] == "1001-1;"
+    assert nieuw["UserID"] == "700001" and nieuw["PrivatePIN"] == "583920" and nieuw["ScheduleRelay"] == "1001-1;"
+    assert nieuw["RelayScheduleActivationPermission"] == "1" and nieuw["Group"] == "Default" and ak.status["ok"] and ak.status["eigen"] == 1
     assert ak.status["vreemd_boven_start"] == 1 and ak.status["eigen"] == 1
     # code wijzigen: set, geen nieuwe gebruiker
     reg.bijwerken("test", jan["id"], pin="694031")

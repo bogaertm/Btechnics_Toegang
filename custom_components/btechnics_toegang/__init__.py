@@ -97,7 +97,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         reg = reg_()
         d = reg.deur_wijzigen(reg.deur_op_naam(call.data["deur"])["id"], call.data.get("naam"),
                               call.data.get("open_entiteit"), wie=await _wie(hass, call), puls_s=call.data.get("puls_s"),
-                              camera=call.data.get("camera"))
+                              camera=call.data.get("camera"), gezicht_live=call.data.get("gezicht_live"))
         _herlaad_entiteiten(hass)
         return {"deur": d}
 
@@ -191,11 +191,10 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     async def tablet_koppelcode(call: ServiceCall) -> ServiceResponse:
         reg = reg_()
         deur = reg.deur_op_naam(call.data["deur"])
-        code = reg.koppelcode_maken(deur["id"], call.data.get("naam"))
-        persistent_notification.async_create(
-            hass, f"Koppelcode voor deur **{deur['naam']}**: **{code}**\n\nTien minuten geldig, één keer bruikbaar.",
-            title="Btechnics Toegang", notification_id=f"{DOMAIN}_koppelcode")
-        return {"code": code, "deur": deur["naam"], "geldig_minuten": 10}
+        soort = call.data.get("soort", "tablet")
+        code = reg.koppelcode_maken(deur["id"], call.data.get("naam"), soort)
+        # niet in een melding: die zien alle HA gebruikers, ook wie geen beheerder is
+        return {"code": code, "deur": deur["naam"], "soort": soort, "geldig_minuten": 10}
 
     @_veilig
     async def tablet_intrekken(call: ServiceCall) -> None:
@@ -287,7 +286,8 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     dienst("deur_wijzigen", deur_wijzigen, vol.Schema({vol.Required("deur"): cv.string, vol.Optional("naam"): cv.string,
                                                        vol.Optional("open_entiteit"): vol.Any("", cv.entity_id),
                                                        vol.Optional("puls_s"): vol.All(vol.Coerce(int), vol.Range(min=0, max=60)),
-                                                       vol.Optional("camera"): vol.Any("", cv.entity_id)}),
+                                                       vol.Optional("camera"): vol.Any("", cv.entity_id),
+                                                       vol.Optional("gezicht_live"): cv.boolean}),
            SupportsResponse.OPTIONAL)
     dienst("deur_verwijderen", deur_verwijderen, vol.Schema({vol.Required("deur"): cv.string}))
     dienst("deur_openen", deur_openen, vol.Schema({vol.Required("deur"): cv.string}))
@@ -310,9 +310,16 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     # koppeling met Btechnics Work via Btechnics IOT (zie werk.py)
     dienst("werk", werk, vol.Schema({vol.Required("actie"): cv.string, vol.Optional("velden"): dict,
                                      vol.Optional("door"): cv.string}), SupportsResponse.ONLY)
-    dienst("tablet_koppelcode", tablet_koppelcode, vol.Schema({vol.Required("deur"): cv.string, vol.Optional("naam"): cv.string}),
+    dienst("tablet_koppelcode", tablet_koppelcode, vol.Schema({vol.Required("deur"): cv.string, vol.Optional("naam"): cv.string,
+                                                               vol.Optional("soort", default="tablet"): vol.In(["tablet", "server"])}),
            SupportsResponse.OPTIONAL)
     dienst("tablet_intrekken", tablet_intrekken, vol.Schema({vol.Required("tablet"): cv.string}))
+
+    @_veilig
+    async def tablet_sleutel_goedkeuren(call: ServiceCall) -> None:
+        reg_().sleutel_goedkeuren(call.data["tablet"], wie=await _wie(hass, call))
+
+    dienst("tablet_sleutel_goedkeuren", tablet_sleutel_goedkeuren, vol.Schema({vol.Required("tablet"): cv.string}))
     dienst("tablet_hernoemen", tablet_hernoemen, vol.Schema({vol.Required("tablet"): cv.string, vol.Required("naam"): cv.string}))
     dienst("uitnodiging_maken", uitnodiging_maken, vol.Schema({vol.Required("deuren"): vol.All(cv.ensure_list, [cv.string]),
                                                                vol.Optional("naam"): cv.string, vol.Optional("geldig_van"): cv.string,

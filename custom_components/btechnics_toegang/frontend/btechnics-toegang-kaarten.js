@@ -1701,6 +1701,15 @@ class VtoCodes extends VtoBase {
       `De gezichtsafdruk van '${esc(e.name)}' wissen? De tablets vergeten ze bij de volgende lijst. De code blijft werken; de medewerker kan opnieuw scannen via zijn portaal.`);
     if (act === "forget") return this._openForm("confirm", e, "forget",
       `'${esc(e.name)}' definitief uit de lijst verwijderen? Dit kan niet ongedaan gemaakt worden. De toegangshistoriek blijft bewaard.`);
+    if ((act === "restore" || act === "unblock") && e.valid_until && Date.parse(e.valid_until) <= Date.now()) {
+      // verlopen geldigheid: nooit stil onbeperkt geldig maken, een nieuwe einddatum is verplicht
+      const voorstel = this._localInput(Date.now() + 24 * 3600 * 1000).replace("T", " ");
+      const inv = prompt(`De geldigheid van '${e.name}' is voorbij. Nieuwe einddatum (JJJJ-MM-DD UU:MM)?`, voorstel);
+      if (!inv) return;
+      const vu = inv.trim().replace(" ", "T") + ":00";
+      if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:00$/.test(vu)) return this._message("Schrijf de datum als JJJJ-MM-DD UU:MM");
+      return this._run({ action: "restore", entry: e.id, valid_until: vu }, "Hersteld");
+    }
     return this._run({ action: act, entry: e.id }, act === "unblock" ? (this._waiting(e) ? "Geactiveerd" : "Gedeblokkeerd") : "Hersteld");
   }
   _localInput(ms) {

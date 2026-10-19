@@ -26,7 +26,8 @@ def _akuvox_deur(hass, deur_id: str) -> bool:
 def _akuvox_ok(hass, deur_id: str) -> bool:
     from .akuvox import akuvox_voor_deur
     ak = akuvox_voor_deur(hass, deur_id)
-    return bool(ak) and ak.status.get("ok") is not False
+    # enkel groen als de laatste sync op het toestel zelf gecontroleerd werd en het deurlog leesbaar is
+    return bool(ak) and ak.status.get("ok") is True and ak.status.get("deurlog_ok") is not False
 
 
 def _action_url(hass, ak=None) -> str | None:
@@ -263,7 +264,7 @@ async def ws_manage_action(hass, connection, msg):
             elif a == "retire":
                 reg.uit_dienst(wie, pid)
             elif a == "restore":
-                reg.herstellen(wie, pid)
+                reg.herstellen(wie, pid, leeg("valid_until"))
             elif a == "forget":
                 reg.vergeten(wie, pid)
             elif a == "remove":
@@ -419,10 +420,13 @@ async def ws_errors(hass, connection, msg):
 def ws_data(hass, connection, msg):
     reg = _reg(hass)
     d = reg.data
-    tablets = [{"id": t["id"], "naam": t["naam"], "deur_id": t["deur_id"], "app_versie": t.get("app_versie"), "soort": t.get("soort", "tablet"),
+    tablets = [{"id": t["id"], "naam": t["naam"], "deur_id": t["deur_id"], "app_versie": t.get("app_versie"), "soort": t.get("soort", "tablet"), "sleutel_wacht": (t.get("pubkey_wacht") or {}).get("pubkey_id", "")[:16] or None,
                 "gekoppeld": t.get("gekoppeld"), "laatst": t.get("laatst"), "online": reg.tablet_online(t, OFFLINE_NA),
                 "status": t.get("status") or {}, "gezicht_sleutel": bool(t.get("pubkey")), "kanaal": t.get("kanaal"),
-                "laatste_lijst_ha": t.get("laatste_lijst_ha"), "gezichten_verwacht": reg.gezichten_verwacht(t)} for t in d["tablets"].values()]
+                "laatste_lijst_ha": t.get("laatste_lijst_ha"), "gezichten_verwacht": reg.gezichten_verwacht(t),
+                "lijst_achter": reg.tablet_online(t, OFFLINE_NA) and (t.get("status") or {}).get("versie") not in (None, d["versie"])
+                and (t.get("laatste_lijst_ha") or "") < (dt_util.utcnow() - timedelta(minutes=2)).isoformat()}
+               for t in d["tablets"].values()]
     deuren = sorted(d["deuren"].values(), key=lambda x: x["naam"].lower())
     gebeurtenissen = list(reversed(d["gebeurtenissen"][-max(1, min(msg["log"], 500)):]))
     from .api import https_info
