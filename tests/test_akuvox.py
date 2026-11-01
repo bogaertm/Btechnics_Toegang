@@ -28,6 +28,7 @@ class NepAkuvox:
         self.schemas = {"1": {"ID": "1", "DisplayID": "1001", "Name": "Always", "Daily": "00:00:00-23:59:59"},
                         "2": {"ID": "2", "DisplayID": "1002", "Name": "Never"}}
         self.schema_negeren = schema_negeren   # toestel dat het schema niet overneemt (zoals de fout van 18/10)
+        self.schema_weigeren = False           # toestel dat geen nieuwe schema's aanneemt
 
     def _neem(self, doel, it):
         for k in self.VELDEN:
@@ -55,13 +56,20 @@ class NepAkuvox:
         actie = url.path.rsplit("/", 1)[1]
         if url.path.startswith("/api/schedule/"):
             for it in data["data"]["item"]:
-                if actie == "add":
+                # zoals de echte S532 (01/11): bewaart Type/Week/Daily/Date letterlijk, Mode = Type, DisplayID klein volgnummer
+                velden = {k: str(it.get(k, "")) for k in ("Type", "Week", "Daily", "Date")}
+                if actie == "add" and self.schema_weigeren:
+                    antw = [{"Ret": 1, "ID": "", "Name": it["Name"]}]
+                elif actie == "add":
                     self.n += 1
-                    self.schemas[str(self.n)] = {"ID": str(self.n), "DisplayID": str(1000 + self.n), "Name": it["Name"],
-                                                 "Mon": it.get("Mon", "0"), "TimeStart": it.get("TimeStart", "")}
+                    self.schemas[str(self.n)] = {"ID": str(self.n), "DisplayID": str(self.n - 2), "Name": it["Name"], "Source": "Local",
+                                                 "Mode": int(velden["Type"] or 0), **velden}
+                    antw = [{"Ret": 0, "Type": int(velden["Type"] or 0), "ID": str(self.n), "Name": it["Name"]}]
+                elif actie == "set":
+                    self.schemas[it["ID"]].update(velden)
                 elif actie == "del":
                     del self.schemas[it["ID"]]
-            return AiohttpClientMockResponse(method, url, json={"retcode": 0, "message": "OK"})
+            return AiohttpClientMockResponse(method, url, json={"retcode": 0, "message": "OK", "data": {"num": 1, "item": antw if actie == "add" else []}})
         for it in data["data"]["item"]:
             if actie == "add":
                 self.n += 1
@@ -80,8 +88,10 @@ async def test_akuvox_sync(hass, aioclient_mock, hass_client_no_auth, hass_ws_cl
     nep = NepAkuvox()
     aioclient_mock.get(f"https://{IP}/api/user/get", side_effect=nep.get)
     aioclient_mock.get(f"https://{IP}/api/doorlog/get", side_effect=nep.get)
+    aioclient_mock.get(f"https://{IP}/api/schedule/get", side_effect=nep.get)
     for a in ("add", "set", "del"):
         aioclient_mock.post(f"https://{IP}/api/user/{a}", side_effect=nep.post)
+        aioclient_mock.post(f"https://{IP}/api/schedule/{a}", side_effect=nep.post)
     aioclient_mock.post(f"https://{IP}/api/relay/trig", json={"retcode": 0, "message": "OK"})
     entry = MockConfigEntry(domain=DOMAIN, data={})
     entry.add_to_hass(hass)
@@ -114,13 +124,40 @@ async def test_akuvox_sync(hass, aioclient_mock, hass_client_no_auth, hass_ws_cl
     v = await ak.async_sync()
     assert v["gewist"] == ["Jan Peeters"] and sorted(nep.users) == ["1", "2"]
     assert ak._staat["gebruikers"][jan["id"]]["userid"] == "700001"
-    # buiten de uren: niet op het toestel
+    # v0.15.0: uren als schema op het toestel; de persoon blijft erop, het toestel bewaakt de uren (ook zonder HA)
     reg.deblokkeren("test", jan["id"])
     nu = dt_util.now()
     andere_dag = (nu.isoweekday() % 7) + 1
     reg.bijwerken("test", jan["id"], schema=[{"dagen": [andere_dag], "van": "08:00", "tot": "09:00"}])
     v = await ak.async_sync()
-    assert not v["toegevoegd"] and sorted(nep.users) == ["1", "2"]
+    assert v["toegevoegd"] == ["Jan Peeters"] and not v["fouten"] and ak.status["ok"]
+    eigen_s = [x for x in nep.schemas.values() if x["Name"].startswith("BTX ")]
+    assert len(eigen_s) == 1 and eigen_s[0]["Type"] == "1" and eigen_s[0]["Week"] == str(andere_dag % 7) and eigen_s[0]["Daily"] == "08:00-09:00"
+    jan_dev = [u for u in nep.users.values() if u["Name"] == "Jan Peeters"][0]
+    assert jan_dev["ScheduleRelay"] == f"{eigen_s[0]['DisplayID']}-1;"
+    # nog eens: niets te doen; over middernacht + einddatum: twee stukken van Type 0 met datum
+    v = await ak.async_sync()
+    assert not any(v[k] for k in ("toegevoegd", "gewijzigd", "gewist", "fouten"))
+    reg.bijwerken("test", jan["id"], schema=[{"dagen": [5], "van": "22:00", "tot": "06:00"}])
+    reg.geldigheid("test", jan["id"], valid_until="2099-12-31T18:00:00+01:00")
+    v = await ak.async_sync()
+    assert not v["fouten"], v
+    eigen_s = sorted((x for x in nep.schemas.values() if x["Name"].startswith("BTX ")), key=lambda x: x["Daily"])
+    assert [(x["Type"], x["Week"], x["Daily"], x["Date"]) for x in eigen_s] == [("0", "6", "00:00-06:00", "00000000-20991231"),
+                                                                              ("0", "5", "22:00-23:59", "00000000-20991231")]
+    jan_dev = [u for u in nep.users.values() if u["Name"] == "Jan Peeters"][0]
+    assert sorted(jan_dev["ScheduleRelay"].strip(";").split(";")) == sorted(f"{x['DisplayID']}-1" for x in eigen_s)
+    # een vreemd schema (SmartPlus of handmatig) blijft altijd staan
+    nep.schemas["90"] = {"ID": "90", "DisplayID": "35533", "Name": "Medewerkers", "Source": "Cloud", "Type": "2", "Daily": "00:00:00-23:59:59"}
+    # schema en datum weg: terug naar 1001, eigen schema's opgeruimd, vreemde blijven
+    reg.bijwerken("test", jan["id"], schema=[])
+    reg.geldigheid("test", jan["id"], valid_until=None)
+    v = await ak.async_sync()
+    assert not v["fouten"], v
+    assert sorted(nep.schemas) == ["1", "2", "90"] and ak._staat["schemas"] == {}
+    assert [u for u in nep.users.values() if u["Name"] == "Jan Peeters"][0]["ScheduleRelay"] == "1001-1;"
+    reg.bijwerken("test", jan["id"], schema=[{"dagen": [andere_dag], "van": "08:00", "tot": "09:00"}])
+    await ak.async_sync()
     # deur openen zonder schakelaar: relais 1 van de S532, met de pulsduur
     await hass.services.async_call(DOMAIN, "deur_openen", {"deur": voordeur["id"]}, blocking=True)
     trig = [c for c in aioclient_mock.mock_calls if str(c[1]).endswith("/api/relay/trig")]

@@ -1,11 +1,162 @@
 {
   "_uitleg": "Echt gedrag van de Akuvox S532 (firmware 532.30.10.315), opgemeten op 18/10/2026 via /api/user/get, /api/doorlog/get en /api/schedule/get. Codes en telefoonnummers weggelaten. Basis voor NepAkuvox in tests/test_akuvox.py.",
-  "user_get_veld_namen": ["BLE_AuthCode", "BLE_Expired", "BLE_KEY_ID", "BLE_Status", "C4Event", "CardCode", "ContactID", "DialAccount", "Group", "ID", "LiftFloorNum", "Name", "PhoneNum", "Priority", "PrivatePIN", "QrCodeUrl", "RelayScheduleActivationPermission", "ScheduleRelay", "Source", "UserID", "WebRelay"],
-  "werkende_gebruiker": {"Group": "Default", "RelayScheduleActivationPermission": "12", "ScheduleRelay": "1001-12;", "Source": "Local", "WebRelay": "0"},
-  "smartplus_gebruiker": {"Group": "Default", "RelayScheduleActivationPermission": "12", "ScheduleRelay": "32682-12", "Source": "Cloud", "WebRelay": "0"},
-  "add_met_ScheduleRelay_zonder_streepje": {"resultaat_op_toestel": {"ScheduleRelay": "", "RelayScheduleActivationPermission": "", "Group": ""}, "gevolg": "code herkend maar Status Failed, RelayID --"},
-  "add_met_Schedule-Relay": {"resultaat_op_toestel": {"ScheduleRelay": "1001-1;", "RelayScheduleActivationPermission": "1", "Group": "Default"}},
-  "deurlog_regel": {"AccessMode": "Normal", "Code": "<code>", "Date": "2026-10-18", "ID": "4629", "Name": "Pakket 18/10", "RelayID": "--", "Status": "Failed", "Time": "21:19:56", "Type": "PIN", "UserID": "700003"},
-  "deurlog_gelukt": {"AccessMode": "Normal", "RelayID": "A", "Status": "Succ", "Type": "PIN"},
-  "schemas": [{"DisplayID": "1001", "Name": "Always", "Daily": "00:00:00-23:59:59"}, {"DisplayID": "1002", "Name": "Never"}]
+  "user_get_veld_namen": [
+    "BLE_AuthCode",
+    "BLE_Expired",
+    "BLE_KEY_ID",
+    "BLE_Status",
+    "C4Event",
+    "CardCode",
+    "ContactID",
+    "DialAccount",
+    "Group",
+    "ID",
+    "LiftFloorNum",
+    "Name",
+    "PhoneNum",
+    "Priority",
+    "PrivatePIN",
+    "QrCodeUrl",
+    "RelayScheduleActivationPermission",
+    "ScheduleRelay",
+    "Source",
+    "UserID",
+    "WebRelay"
+  ],
+  "werkende_gebruiker": {
+    "Group": "Default",
+    "RelayScheduleActivationPermission": "12",
+    "ScheduleRelay": "1001-12;",
+    "Source": "Local",
+    "WebRelay": "0"
+  },
+  "smartplus_gebruiker": {
+    "Group": "Default",
+    "RelayScheduleActivationPermission": "12",
+    "ScheduleRelay": "32682-12",
+    "Source": "Cloud",
+    "WebRelay": "0"
+  },
+  "add_met_ScheduleRelay_zonder_streepje": {
+    "resultaat_op_toestel": {
+      "ScheduleRelay": "",
+      "RelayScheduleActivationPermission": "",
+      "Group": ""
+    },
+    "gevolg": "code herkend maar Status Failed, RelayID --"
+  },
+  "add_met_Schedule-Relay": {
+    "resultaat_op_toestel": {
+      "ScheduleRelay": "1001-1;",
+      "RelayScheduleActivationPermission": "1",
+      "Group": "Default"
+    }
+  },
+  "deurlog_regel": {
+    "AccessMode": "Normal",
+    "Code": "<code>",
+    "Date": "2026-10-18",
+    "ID": "4629",
+    "Name": "Pakket 18/10",
+    "RelayID": "--",
+    "Status": "Failed",
+    "Time": "21:19:56",
+    "Type": "PIN",
+    "UserID": "700003"
+  },
+  "deurlog_gelukt": {
+    "AccessMode": "Normal",
+    "RelayID": "A",
+    "Status": "Succ",
+    "Type": "PIN"
+  },
+  "schemas": [
+    {
+      "ID": "2",
+      "DisplayID": "1002",
+      "Name": "Never",
+      "Source": "Local",
+      "Mode": 2,
+      "Type": 2,
+      "Daily": "-",
+      "Date": "",
+      "Week": ""
+    },
+    {
+      "ID": "1",
+      "DisplayID": "1001",
+      "Name": "Always",
+      "Source": "Local",
+      "Mode": 2,
+      "Type": 2,
+      "Daily": "00:00:00-23:59:59",
+      "Date": "",
+      "Week": ""
+    },
+    {
+      "ID": "11",
+      "DisplayID": "35533",
+      "Name": "<SmartPlus groep>",
+      "Source": "Cloud",
+      "Mode": 2,
+      "Type": 2,
+      "Daily": "00:00:00-23:59:59",
+      "Date": "",
+      "Week": ""
+    }
+  ],
+  "schema_formaat": {
+    "_uitleg": "Opgemeten 01/11/2026 met de dienst akuvox_schema_proef en de webinterface van de S532 (app.js bouwt zo zelf zijn schema's).",
+    "add_verzoek": {
+      "target": "schedule",
+      "action": "add",
+      "data": {
+        "item": [
+          {
+            "Name": "BTX 700002-0",
+            "Type": "1",
+            "Week": "12345",
+            "Daily": "08:00-17:00"
+          }
+        ]
+      }
+    },
+    "add_antwoord": {
+      "retcode": 0,
+      "action": "add",
+      "message": "OK",
+      "data": {
+        "num": 1,
+        "item": [
+          {
+            "Ret": 0,
+            "Type": 1,
+            "ID": "14",
+            "Name": "BTX 700002-0"
+          }
+        ]
+      }
+    },
+    "teruggelezen": {
+      "Mode": 1,
+      "Type": 1,
+      "Daily": "08:00-17:00",
+      "Date": "",
+      "DisplayID": "1",
+      "ID": "14",
+      "Name": "BTX 700002-0",
+      "Source": "Local",
+      "Week": "12345"
+    },
+    "Type": {
+      "0": "datumbereik (Date) met dagen (Week) en uren (Daily)",
+      "1": "wekelijks: Week en Daily",
+      "2": "dagelijks: enkel Daily"
+    },
+    "Date": "JJJJMMDD-JJJJMMDD, 00000000 = geen grens (zoals de webinterface)",
+    "Week": "cijfers aaneen, 0 = zondag, 1 = maandag ... 6 = zaterdag",
+    "Daily": "HH:MM-HH:MM",
+    "let_op": "Het toestel bewaart deze velden letterlijk zonder controle; velden uit de oude handleiding (Mon..Sun, TimeStart, DateStart) worden genegeerd en geven een leeg schema.",
+    "gebruiker": "ScheduleRelay '<DisplayID>-1;' (meerdere achter elkaar) wordt aanvaard via Schedule-Relay en zo teruggelezen; DisplayID van eigen schema's is een klein volgnummer (1, 2, ...)"
+  }
 }

@@ -119,9 +119,9 @@ class Akuvox:
         for p in self.reg.data["personen"].values():
             if p["status"] != "active" or self.deur_id not in p["deuren"] or not p.get("pin"):
                 continue
-            if p.get("schema") and reden_geweigerd({"schema": p["schema"]}, nu):
-                continue
-            uit[p["id"]] = {"naam": p["naam"][:63], "pin": p["pin"]}
+            # v0.15.0: uren en datums gaan als schema mee naar het toestel; de persoon blijft erop staan (ook buiten de uren)
+            uit[p["id"]] = {"naam": p["naam"][:63], "pin": p["pin"], "schemas": self.schema_items(p), "relay": f"{SCHEDULE_ALTIJD}-1;",
+                            "_p": p}
         return uit
 
     @staticmethod
@@ -134,9 +134,10 @@ class Akuvox:
         if pin not in (None, "") and "*" not in str(pin) and str(pin) != w["pin"]:
             fout.append("code")
         sr = str(dev.get("ScheduleRelay") or dev.get("Schedule-Relay") or "")
-        delen = [x for x in sr.split(";") if x]
-        if not any(x.startswith(f"{SCHEDULE_ALTIJD}-") and "1" in x.split("-", 1)[1] for x in delen):
-            fout.append(f"schema/relais leeg of fout ({sr or 'leeg'})")
+        delen = sorted(x for x in sr.split(";") if x)
+        verwacht = sorted(x for x in w.get("relay", f"{SCHEDULE_ALTIJD}-1;").split(";") if x)
+        if delen != verwacht:
+            fout.append(f"schema/relais {sr or 'leeg'} in plaats van {w.get('relay', '')}")
         perm = dev.get("RelayScheduleActivationPermission")
         if perm is not None and "1" not in str(perm):
             fout.append(f"relaisrecht ({perm or 'leeg'})")
@@ -152,6 +153,143 @@ class Akuvox:
     @staticmethod
     def _pin_h(pin: str) -> str:
         return hashlib.sha256(f"akuvox-pin\n{pin}".encode()).hexdigest()
+
+    # ------------------------------------------------------------------ schema's (v0.15.0)
+    # Formaat volgens de webinterface van de S532 zelf (app.js): Type 0 = datumbereik + dagen + uren, 1 = wekelijks,
+    # 2 = dagelijks; Date "JJJJMMDD-JJJJMMDD" ("00000000" = geen grens), Week = cijfers 0 (zondag) tot 6 (zaterdag),
+    # Daily "HH:MM-HH:MM". Een gebruiker verwijst ernaar met ScheduleRelay "<DisplayID>-1;".
+    SCHEMA_PREFIX = "BTX "
+
+    @staticmethod
+    def _datum(iso: str | None) -> str:
+        if not iso:
+            return "00000000"
+        t = dt_util.parse_datetime(iso)
+        if t is None:
+            return "00000000"
+        return dt_util.as_local(t).strftime("%Y%m%d")
+
+    @classmethod
+    def schema_items(cls, p: dict) -> list[dict]:
+        """Gewenste S532 schema's voor een persoon, zonder naam/ID. Leeg = altijd (1001)."""
+        blokken = p.get("schema") or []
+        datums = bool(p.get("valid_from") or p.get("valid_until"))
+        if not blokken and not datums:
+            return []
+        stukken: list[tuple[str, str, str]] = []   # (week, van, tot)
+        for b in blokken or [{"dagen": [1, 2, 3, 4, 5, 6, 7], "van": "00:00", "tot": "23:59"}]:
+            dagen = sorted({d % 7 for d in b["dagen"]})
+            if b["tot"] > b["van"]:
+                stukken.append(("".join(map(str, dagen)), b["van"], b["tot"]))
+            else:
+                # over middernacht (of 24 uur): de startdag tot 23:59, de volgende dag vanaf 00:00
+                stukken.append(("".join(map(str, dagen)), b["van"], "23:59"))
+                if b["tot"] != "00:00":
+                    stukken.append(("".join(map(str, sorted({(d + 1) % 7 for d in dagen}))), "00:00", b["tot"]))
+        uit = []
+        for week, van, tot in stukken:
+            it = {"Type": "0" if datums else "1", "Week": week, "Daily": f"{van}-{tot}"}
+            if datums:
+                it["Date"] = f"{cls._datum(p.get('valid_from'))}-{cls._datum(p.get('valid_until'))}"
+            uit.append(it)
+        return uit
+
+    @staticmethod
+    def schema_gelijk(dev: dict, w: dict) -> bool:
+        def kort(t: str) -> str:   # "08:00:00-17:00:00" en "08:00-17:00" zijn gelijk
+            return "-".join(x[:5] for x in str(t or "").split("-"))
+        return (str(dev.get("Type")) == w["Type"] and "".join(sorted(str(dev.get("Week") or ""))) == "".join(sorted(w["Week"]))
+                and kort(dev.get("Daily")) == kort(w["Daily"]) and (w["Type"] != "0" or str(dev.get("Date") or "") == w["Date"]))
+
+    async def _schemas_zetten(self, gewenst: dict[str, dict], verslag: dict) -> tuple[dict[str, str], list]:
+        """Zet de eigen schema's (naam 'BTX <userid>-<n>') op het toestel en leest terug. Geeft per persoon de ScheduleRelay
+        tekst, enkel voor wie alle schema's echt goed op het toestel staan, en de lijst eigen schema-ID's die weg mogen."""
+        staat = self._staat
+        eigen: dict = staat.setdefault("schemas", {})   # sleutel "pid:n" -> {"id", "naam"}
+        if not gewenst and not eigen:
+            return {}, []
+        try:
+            op_toestel = {str(x.get("ID")): x for x in await self.schemas()}
+        except AkuvoxFout as e:
+            verslag["fouten"].append(f"schema's lezen: {e}")
+            return {}, []
+        nodig: dict[str, dict] = {}
+        for pid, w in gewenst.items():
+            for n, it in enumerate(w["schemas"]):
+                nodig[f"{pid}:{n}"] = {**it, "_pid": pid}
+        # eigen koppelingen die niet meer naar ons schema wijzen loslaten (iemand anders gaf dat ID een andere naam)
+        for k, info in list(eigen.items()):
+            dev = op_toestel.get(str(info["id"]))
+            if dev is not None and (str(dev.get("Name")) != info["naam"] or str(dev.get("Source", "Local")) != "Local"):
+                del eigen[k]
+        geschreven = False
+        for k, it in nodig.items():
+            pid = it["_pid"]
+            item = {x: it[x] for x in ("Type", "Week", "Daily", "Date") if x in it}
+            info = eigen.get(k)
+            dev = op_toestel.get(str(info["id"])) if info else None
+            try:
+                if dev is not None:
+                    if not self.schema_gelijk(dev, item):
+                        await self._vraag("POST", "/api/schedule/set", {"target": "schedule", "action": "set", "data": {"item": [
+                            {"ID": str(dev.get("ID")), "DisplayID": str(dev.get("DisplayID")), "Name": info["naam"], **item}]}})
+                        geschreven = True
+                    continue
+                naam = f"{self.SCHEMA_PREFIX}{self._staat['gebruikers'].get(pid, {}).get('userid') or pid[-6:]}-{k.split(':')[1]}"
+                j = await self._vraag("POST", "/api/schedule/add", {"target": "schedule", "action": "add", "data": {"item": [{"Name": naam, **item}]}})
+                nieuw = ((j.get("data") or {}).get("item") or [{}])[0]
+                if str(nieuw.get("Ret", "0")) != "0" or not nieuw.get("ID"):
+                    verslag["fouten"].append(f"schema {naam}: toestel weigerde ({str(nieuw)[:120]})")
+                    continue
+                eigen[k] = {"id": str(nieuw["ID"]), "naam": naam}
+                geschreven = True
+            except AkuvoxFout as e:
+                verslag["fouten"].append(f"schema voor {gewenst[pid]['naam']}: {e}")
+        if geschreven:
+            try:
+                op_toestel = {str(x.get("ID")): x for x in await self.schemas()}
+            except AkuvoxFout as e:
+                verslag["fouten"].append(f"schema's terug lezen: {e}")
+                return {}, []
+        # terug lezen: per persoon enkel een ScheduleRelay als ALLE schema's kloppen
+        relay: dict[str, str] = {}
+        for pid, w in gewenst.items():
+            if not w["schemas"]:
+                continue
+            ids = []
+            for n, it in enumerate(w["schemas"]):
+                info = eigen.get(f"{pid}:{n}")
+                dev = op_toestel.get(str(info["id"])) if info else None
+                if dev is None or str(dev.get("Name")) != info["naam"] or not self.schema_gelijk(dev, it) or not dev.get("DisplayID"):
+                    verslag["fouten"].append(f"schema {n + 1} van {w['naam']} staat niet goed op het toestel")
+                    ids = None
+                    break
+                ids.append(str(dev["DisplayID"]))
+            if ids:
+                relay[pid] = "".join(f"{i}-1;" for i in ids)
+        weg = [str(info["id"]) for k, info in eigen.items() if k not in nodig]
+        return relay, weg
+
+    async def _schemas_opruimen(self, weg: list[str], verslag: dict) -> None:
+        """Eigen schema's die niemand meer nodig heeft wissen. Enkel op ID uit onze eigen administratie, met naamcontrole."""
+        if not weg:
+            return
+        eigen: dict = self._staat.setdefault("schemas", {})
+        try:
+            op_toestel = {str(x.get("ID")): x for x in await self.schemas()}
+        except AkuvoxFout as e:
+            verslag["fouten"].append(f"schema's lezen: {e}")
+            return
+        for k, info in list(eigen.items()):
+            if str(info["id"]) not in weg:
+                continue
+            dev = op_toestel.get(str(info["id"]))
+            try:
+                if dev is not None and str(dev.get("Name")) == info["naam"] and str(dev.get("Name")).startswith(self.SCHEMA_PREFIX):
+                    await self._vraag("POST", "/api/schedule/del", {"target": "schedule", "action": "del", "data": {"item": [{"ID": str(info["id"])}]}})
+                del eigen[k]
+            except AkuvoxFout as e:
+                verslag["fouten"].append(f"schema {info['naam']} wissen: {e}")
 
     # ------------------------------------------------------------------ sync
 
@@ -173,6 +311,15 @@ class Akuvox:
             self.status["velden"] = sorted({k for x in lijst for k in x})[:40]
             gewenst = self._gewenst(dt_util.now())
             geschreven = False
+            relay, schema_weg = await self._schemas_zetten({k: v for k, v in gewenst.items() if v["schemas"]}, verslag)
+            for pid, w in list(gewenst.items()):
+                if not w["schemas"]:
+                    continue
+                if pid in relay:
+                    w["relay"] = relay[pid]
+                elif reden_geweigerd({"schema": w["_p"].get("schema") or []}, dt_util.now()):
+                    # schema's niet goed op het toestel: veilig terugvallen op de oude regel (enkel binnen de uren, door HA)
+                    del gewenst[pid]
 
             # koppelingen die niet (meer) naar onze gebruiker wijzen loslaten: nooit een vreemde wissen of overschrijven
             for pid, info in list(eigen.items()):
@@ -211,7 +358,7 @@ class Akuvox:
                 info = eigen.get(pid)
                 velden = {"Name": w["naam"], "PrivatePIN": w["pin"],
                           # het toestel toont ScheduleRelay maar aanvaardt bij add/set enkel Schedule-Relay
-                          "Schedule-Relay": f"{SCHEDULE_ALTIJD}-1;", "ScheduleRelay": f"{SCHEDULE_ALTIJD}-1;",
+                          "Schedule-Relay": w["relay"], "ScheduleRelay": w["relay"],
                           "RelayScheduleActivationPermission": "1", "Group": "Default", "WebRelay": "0", "LiftFloorNum": "0"}
                 dev = per_userid.get(str(info["userid"])) if info else None
                 try:
@@ -259,9 +406,12 @@ class Akuvox:
                 if pid not in gewenst and dev is not None and self._is_van_ons(dev, info):
                     verslag["fouten"].append(f"{info.get('naam', pid)} staat nog op het toestel maar heeft geen toegang meer")
 
+            # pas nu (gebruikers verwijzen er niet meer naar) eigen schema's wissen die niemand nodig heeft
+            await self._schemas_opruimen(schema_weg, verslag)
             van_ons = {str(i["userid"]) for i in eigen.values()}
             fout = "; ".join(verslag["fouten"])[:400] or None
             self.status.update(ok=not verslag["fouten"], fout=fout, laatst=dt_util.utcnow().isoformat(), eigen=in_orde,
+                               schemas=len(self._staat.get("schemas", {})),
                                gewenst=len(gewenst), toestel=len(lijst),
                                vreemd_boven_start=sum(1 for u in per_userid if u.isdigit() and int(u) >= USER_ID_START
                                                       and u not in van_ons))
@@ -332,7 +482,16 @@ class Akuvox:
             gelukt = str(x.get("Status") or "").lower().startswith(("succ", "ok", "open"))
             pid = per_userid.get(str(x.get("UserID") or ""))
             naam = self.reg.data["personen"].get(pid, {}).get("naam") if pid else None
-            if pid and not gelukt and laatste:
+            p = self.reg.data["personen"].get(pid, {}) if pid else {}
+
+            def _dag(iso):
+                d = dt_util.parse_datetime(iso) if iso else None
+                return dt_util.as_local(d).date().isoformat() if d else None
+            buiten = bool(p) and bool(reden_geweigerd({"schema": p.get("schema") or [], "van": _dag(p.get("valid_from")),
+                                                       "tot": _dag(p.get("valid_until"))}, dt_util.as_local(t)))
+            if pid and not gelukt and laatste and buiten:
+                pass   # buiten de uren of datums: het toestel weigert terecht (schema op de S532)
+            elif pid and not gelukt and laatste:
                 # het toestel herkende onze gebruiker (juiste code) maar weigerde: rechten op het toestel kloppen niet
                 from homeassistant.components import persistent_notification
                 melding = (f"De Akuvox weigerde {naam or pid} ({x.get('Type', '')}) om {tijd}, hoewel het toestel de gebruiker herkende. "
@@ -348,7 +507,8 @@ class Akuvox:
                           "name": naam or str(x.get("Name") or "Onbekend")[:60], "card": "",
                           "method": {"pin": "code", "kaart": "badge", "gezicht": "gezicht", "ha": "op afstand",
                                      "knop": "exitknop", "oproep": "oproep"}.get(METHODE.get(soort, ""), soort or "onbekend"),
-                          "opened": gelukt, "persoon_id": pid or "", "tekst": f"Akuvox {x.get('Type', '')}".strip()})
+                          "opened": gelukt, "persoon_id": pid or "",
+                          "tekst": (f"Akuvox {x.get('Type', '')}".strip() + (" (buiten de uren)" if buiten and not gelukt else ""))})
         hoogste = max((int(str(x.get("ID"))) for x in items if str(x.get("ID") or "").isdigit()), default=None)
         if hoogste is not None:
             staat["laatste_log"] = str(hoogste)
@@ -446,7 +606,7 @@ class Akuvox:
             ruw_log = [str(e)]
         geheim = ("PrivatePIN", "CardCode", "BLE_AuthCode", "PhoneNum", "QrCodeUrl")
         try:
-            schemas = (await self._vraag("GET", "/api/schedule/get?page=1")).get("data")
+            schemas = await self.schemas()
         except Exception as e:  # noqa: BLE001  enkel diagnose
             schemas = str(e)[:200]
         return {"eigen_gebruikers": [{k: v for k, v in x.items() if k not in geheim} for x in lijst if str(x.get("UserID")) in eigen],

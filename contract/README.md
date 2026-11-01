@@ -66,3 +66,16 @@ Tablet app v1.72 aanvaardt schema 1 en 2. Eerst de app bijwerken, dan HA.
 | GET /apk | tablet (sleutel, https 8443) | het APK bestand (application/vnd.android.package-archive). De tablet controleert grootte, sha256, pakketnaam, versie en handtekening en installeert stil als toestelbeheerder, nooit tijdens een oproep |
 | POST /apk_upload | beheerder (HA token, enkel lokaal) | `?version_code=66&versie=1.72&sha256=<hex>` met de APK als body. HA rekent de sha256 zelf na en weigert een oudere versie (409) |
 | `geopend` | GET /wacht | `[{"uid": "ha-...", "wie": "<voornaam of leeg>"}]` naast `foto` bij openen op afstand. De tablet toont "Deur open" met het deurgeluid, elke uid een keer |
+
+## Akuvox schema's (v0.15.0, 01/11/2026)
+
+Uren en einddatum van een persoon staan als eigen schema's op de S532, zodat ze ook gelden als HA uitvalt.
+Formaat in `akuvox_s532.json` (schema_formaat). Regels:
+
+- Eigen schema's heten `BTX <UserID>-<n>`, staan in de HA opslag (akuvox.schemas) en worden enkel op dat ID en die naam gewijzigd of gewist. SmartPlus (Source Cloud), Always en Never blijven onaangeroerd.
+- Zonder uren en zonder datums: `1001-1;` (Always), zoals voorheen.
+- Met uren: Type 1 (Week + Daily). Met datums: Type 0 met Date. Over middernacht: twee schema's (tot 23:59 en vanaf 00:00 de dag erna).
+- Einddatum per dag op het toestel; HA zet de persoon nog altijd op het exacte uur uit dienst.
+- Eerst schema's zetten en terug lezen, dan de gebruiker (ScheduleRelay), pas daarna ongebruikte eigen schema's wissen.
+- Staat een schema niet goed op het toestel, dan valt HA veilig terug op de oude regel (persoon enkel binnen de uren op het toestel).
+- Een weigering in het deurlog buiten de uren of datums is terecht: geen alarm, in de historiek "(buiten de uren)".

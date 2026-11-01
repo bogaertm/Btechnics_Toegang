@@ -13,8 +13,10 @@ async def _opzet(hass, aioclient_mock, nep):
     await hass.config.async_set_time_zone("Europe/Brussels")
     aioclient_mock.get(f"https://{IP}/api/user/get", side_effect=nep.get)
     aioclient_mock.get(f"https://{IP}/api/doorlog/get", side_effect=nep.get)
+    aioclient_mock.get(f"https://{IP}/api/schedule/get", side_effect=nep.get)
     for a in ("add", "set", "del"):
         aioclient_mock.post(f"https://{IP}/api/user/{a}", side_effect=nep.post)
+        aioclient_mock.post(f"https://{IP}/api/schedule/{a}", side_effect=nep.post)
     entry = MockConfigEntry(domain=DOMAIN, data={})
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
@@ -94,3 +96,34 @@ async def test_toestel_weigert_eigen_gebruiker_geeft_alarm(hass, aioclient_mock)
     from homeassistant.components import persistent_notification
     assert any("weigert eigen gebruiker" in (n.get("title") or "") for n in persistent_notification._async_get_or_create_notifications(hass).values())
     assert ak.status["ok"] is False
+
+
+async def test_weigering_buiten_de_uren_is_geen_alarm(hass, aioclient_mock):
+    """v0.15.0: het schema staat op de S532; weigert het toestel buiten de uren, dan is dat terecht (geen alarm)."""
+    nep = NepAkuvox()
+    reg, ak, deur = await _opzet(hass, aioclient_mock, nep)
+    nu = dt_util.now()
+    andere_dag = (nu.isoweekday() % 7) + 1
+    reg.toevoegen("test", naam="Jan Peeters", pin="583920", deuren=[deur["id"]], schema=[{"dagen": [andere_dag], "van": "08:00", "tot": "09:00"}])
+    v = await ak.async_sync()
+    assert v["toegevoegd"] == ["Jan Peeters"] and ak.status["ok"]
+    nep.log = [{"ID": "10", "Date": nu.strftime("%Y-%m-%d"), "Time": nu.strftime("%H:%M:%S"), "Name": "x", "UserID": "1", "Type": "PIN", "Status": "Succ"}]
+    await ak.async_deurlog()
+    nep.log.append({"ID": "11", "Date": nu.strftime("%Y-%m-%d"), "Time": nu.strftime("%H:%M:%S"), "Name": "Jan Peeters",
+                    "UserID": "700001", "Type": "PIN", "Status": "Failed", "RelayID": "--"})
+    rijen = await ak.async_deurlog()
+    from homeassistant.components import persistent_notification
+    assert not any("weigert eigen gebruiker" in (n.get("title") or "") for n in persistent_notification._async_get_or_create_notifications(hass).values())
+    assert ak.status["ok"] is True and rijen[0]["tekst"].endswith("(buiten de uren)") and not rijen[0]["opened"]
+
+
+async def test_schema_niet_op_toestel_valt_veilig_terug(hass, aioclient_mock):
+    """Weigert het toestel het schema, dan geen gebruiker met 'altijd' buiten de uren: veilig terug naar de oude regel."""
+    nep = NepAkuvox()
+    reg, ak, deur = await _opzet(hass, aioclient_mock, nep)
+
+    nep.schema_weigeren = True
+    andere_dag = (dt_util.now().isoweekday() % 7) + 1
+    reg.toevoegen("test", naam="Jan Peeters", pin="583920", deuren=[deur["id"]], schema=[{"dagen": [andere_dag], "van": "08:00", "tot": "09:00"}])
+    v = await ak.async_sync()
+    assert v["fouten"] and not v["toegevoegd"] and not [u for u in nep.users.values() if u["Name"] == "Jan Peeters"]
