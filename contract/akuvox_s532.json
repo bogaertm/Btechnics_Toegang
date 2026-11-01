@@ -157,6 +157,8 @@
     "Week": "cijfers aaneen, 0 = zondag, 1 = maandag ... 6 = zaterdag",
     "Daily": "HH:MM-HH:MM",
     "let_op": "Het toestel bewaart deze velden letterlijk zonder controle; velden uit de oude handleiding (Mon..Sun, TimeStart, DateStart) worden genegeerd en geven een leeg schema.",
-    "gebruiker": "ScheduleRelay '<DisplayID>-1;' (meerdere achter elkaar) wordt aanvaard via Schedule-Relay en zo teruggelezen; DisplayID van eigen schema's is een klein volgnummer (1, 2, ...)"
+    "gebruiker": "ScheduleRelay '<DisplayID>-1;' (meerdere achter elkaar) wordt aanvaard via Schedule-Relay en zo teruggelezen; DisplayID van eigen schema's is een klein volgnummer (1, 2, ...)",
+    "set": "schedule/set met ID, DisplayID, Name en de velden werkt: teruggelezen zoals verstuurd (gemeten 01/11)",
+    "displayid": "Wissen nummert niet opnieuw (B bleef 2, C bleef 3), maar een vrijgekomen DisplayID wordt hergebruikt bij de volgende add (D kreeg 1 na het wissen van A). Daarom nooit een schema wissen waar nog een gebruiker naar verwijst."
   }
 }

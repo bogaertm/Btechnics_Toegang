@@ -69,7 +69,10 @@ class NepAkuvox:
                     antw = [{"Ret": 1, "ID": "", "Name": it["Name"]}]
                 elif actie == "add":
                     self.n += 1
-                    self.schemas[str(self.n)] = {"ID": str(self.n), "DisplayID": str(self.n - 2), "Name": it["Name"], "Source": "Local",
+                    # zoals de echte S532 (gemeten 01/11): laagste vrije DisplayID, een vrijgekomen nummer wordt hergebruikt
+                    bezet = {x["DisplayID"] for x in self.schemas.values()}
+                    vrij = next(str(i) for i in range(1, 1000) if str(i) not in bezet)
+                    self.schemas[str(self.n)] = {"ID": str(self.n), "DisplayID": vrij, "Name": it["Name"], "Source": "Local",
                                                  "Mode": int(velden["Type"] or 0), **velden}
                     antw = [{"Ret": 0, "Type": int(velden["Type"] or 0), "ID": str(self.n), "Name": it["Name"]}]
                 elif actie == "set":
