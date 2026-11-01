@@ -116,7 +116,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         # eerst de fotovraag naar de tablet: die maakt zijn camera klaar terwijl het relais schakelt
         uid = f"ha-{uuid.uuid4()}"
         voornaam = "" if wie in ("automatisch", "onbekend") else (wie.split() or [""])[0]
-        d["register"].foto_vragen(deur["id"], uid, geopend=True, wie=voornaam)
+        d["register"].foto_vragen(deur["id"], uid)
         try:
             await d["toegang"].async_deur_openen(deur)
         except ToegangFout:
@@ -124,6 +124,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         except Exception as e:  # noqa: BLE001
             d["register"].audit(wie, "deur openen mislukt", deur["naam"], soort="deur", detail=str(e))
             raise HomeAssistantError(f"Openen mislukt: {e}") from e
+        d["register"].geopend_melden(deur["id"], uid, voornaam)   # pas nu: het relais schakelde echt
         d["register"].audit(wie, "deur geopend op afstand", deur["naam"], soort="deur")
         d["register"].gewijzigd(lijst_veranderd=False)
         await d["toegang"].async_registreer(deur, methode="ha", persoon=None, opened=True, tekst="Deur openen in Home Assistant", wie=wie,
@@ -275,7 +276,10 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
     async def akuvox_schema_proef(call: ServiceCall) -> ServiceResponse:
         from .akuvox import AkuvoxFout
-        ak = _aks(call)[0]
+        lijst = _aks(call)
+        if len(lijst) > 1 and not call.data.get("toestel"):
+            raise HomeAssistantError("Er zijn twee Akuvox toestellen: kies toestel 1 of 2")
+        ak = lijst[0]
         try:
             if call.data.get("volgorde"):
                 return {"nr": ak.nr, **await ak.async_schema_volgorde()}
@@ -300,7 +304,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                                                        vol.Optional("puls_s"): vol.All(vol.Coerce(int), vol.Range(min=0, max=60)),
                                                        vol.Optional("camera"): vol.Any("", cv.entity_id),
                                                        vol.Optional("gezicht_live"): cv.boolean,
-                                                       vol.Optional("gezicht_drempel"): vol.Any("", vol.All(vol.Coerce(float), vol.Range(min=0, max=0.95)))}),
+                                                       vol.Optional("gezicht_drempel"): vol.Any("", 0, vol.All(vol.Coerce(float), vol.Range(min=0.6, max=0.95)))}),
            SupportsResponse.OPTIONAL)
     dienst("deur_verwijderen", deur_verwijderen, vol.Schema({vol.Required("deur"): cv.string}))
     dienst("deur_openen", deur_openen, vol.Schema({vol.Required("deur"): cv.string}))

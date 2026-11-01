@@ -6,6 +6,8 @@ Daarom staan alle views op requires_auth = False en controleren we de sleutel ze
 from __future__ import annotations
 
 import base64
+import tempfile
+import asyncio
 import binascii
 import hashlib
 import logging
@@ -352,37 +354,41 @@ class ApkUploadView(HomeAssistantView):
         verwacht = request.query.get("sha256", "").lower()
         if len(verwacht) != 64:
             return _fout(HTTPStatus.BAD_REQUEST, "sha256 ontbreekt")
-        oud = (_reg(hass).data.get("app") or {}).get("version_code") or 0
-        if vc < oud:
-            return _fout(HTTPStatus.CONFLICT, f"versie {vc} is ouder dan {oud}")
-        pad = apk_pad(hass)
-        tmp = pad + ".tmp"
-        await hass.async_add_executor_job(lambda: os.makedirs(os.path.dirname(pad), exist_ok=True))
-        h = hashlib.sha256()
-        grootte = 0
-        bestand = await hass.async_add_executor_job(open, tmp, "wb")
-        try:
-            async for stuk in request.content.iter_chunked(1024 * 256):
-                grootte += len(stuk)
-                if grootte > APK_MAX:
-                    raise ValueError("te groot")
-                h.update(stuk)
-                await hass.async_add_executor_job(bestand.write, stuk)
-        except ValueError as e:
-            await hass.async_add_executor_job(bestand.close)
-            await hass.async_add_executor_job(os.remove, tmp)
-            return _fout(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, str(e))
-        await hass.async_add_executor_job(bestand.close)
-        if h.hexdigest() != verwacht or grootte < 1024:
-            await hass.async_add_executor_job(os.remove, tmp)
-            return _fout(HTTPStatus.BAD_REQUEST, "sha256 klopt niet met wat ontvangen werd")
-        # v0.14.2: eerst het bestand op zijn plaats, pas daarna aankondigen (apk_zetten verwittigt de tablets meteen;
-        # omgekeerd haalde de tablet nog het vorige bestand en weigerde hij terecht op de grootte)
-        await hass.async_add_executor_job(os.replace, tmp, pad)
-        try:
-            app = _reg(hass).apk_zetten(vc, versie, verwacht, grootte, os.path.basename(pad), wie=user.name or "")
-        except ToegangFout as e:
-            return _fout(HTTPStatus.CONFLICT, str(e))
+        # v0.15.2: één upload tegelijk, eigen tijdelijk bestand, altijd opruimen, versie opnieuw nakijken voor het vervangen
+        slot = hass.data[DOMAIN].setdefault("apk_slot", asyncio.Lock())
+        async with slot:
+            oud = (_reg(hass).data.get("app") or {}).get("version_code") or 0
+            if vc < oud:
+                return _fout(HTTPStatus.CONFLICT, f"versie {vc} is ouder dan {oud}")
+            pad = apk_pad(hass)
+            await hass.async_add_executor_job(lambda: os.makedirs(os.path.dirname(pad), exist_ok=True))
+            fd, tmp = await hass.async_add_executor_job(lambda: tempfile.mkstemp(dir=os.path.dirname(pad), suffix=".tmp"))
+            bestand = await hass.async_add_executor_job(os.fdopen, fd, "wb")
+            h = hashlib.sha256()
+            grootte = 0
+            klaar = False
+            try:
+                try:
+                    async for stuk in request.content.iter_chunked(1024 * 256):
+                        grootte += len(stuk)
+                        if grootte > APK_MAX:
+                            return _fout(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "te groot")
+                        h.update(stuk)
+                        await hass.async_add_executor_job(bestand.write, stuk)
+                finally:
+                    await hass.async_add_executor_job(bestand.close)
+                if h.hexdigest() != verwacht or grootte < 1024:
+                    return _fout(HTTPStatus.BAD_REQUEST, "sha256 klopt niet met wat ontvangen werd")
+                # eerst het bestand op zijn plaats, pas daarna aankondigen (apk_zetten verwittigt de tablets meteen)
+                await hass.async_add_executor_job(os.replace, tmp, pad)
+                klaar = True
+                try:
+                    app = _reg(hass).apk_zetten(vc, versie, verwacht, grootte, os.path.basename(pad), wie=user.name or "")
+                except ToegangFout as e:
+                    return _fout(HTTPStatus.CONFLICT, str(e))
+            finally:
+                if not klaar:
+                    await hass.async_add_executor_job(lambda: os.path.exists(tmp) and os.remove(tmp))
         return self.json({"ok": True, **{k: app[k] for k in ("version_code", "versie", "sha256", "grootte")}})
 
 

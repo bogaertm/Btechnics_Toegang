@@ -176,7 +176,8 @@ class Register:
 
     async def wacht_op_versie(self, versie: int, max_s: float, tablet_id: str | None = None) -> bool:
         def klaar() -> bool:
-            return self.data["versie"] != versie or bool(tablet_id and self._open_fotovragen(tablet_id))
+            return self.data["versie"] != versie or bool(tablet_id and (self._open_fotovragen(tablet_id) or [
+                v for v in getattr(self, "_geopend", {}).get(tablet_id, []) if v["tot"] > time.time()]))
         if klaar():
             return True
         try:
@@ -203,6 +204,22 @@ class Register:
             self.hass.async_create_task(self._wek())
         return n
 
+    def geopend_melden(self, deur_id: str, uid: str, wie: str = "") -> int:
+        """v0.15.2: pas NA een gelukte opening melden aan de tablets van die deur dat HA opende (anders toont een tablet
+        'Deur open' terwijl het relais faalde). Aparte wachtrij, los van de fotovraag die al vroeger vertrok."""
+        if not hasattr(self, "_geopend"):
+            self._geopend = {}
+        tot = time.time() + 30
+        n = 0
+        for t in self.data["tablets"].values():
+            if t["deur_id"] == deur_id:
+                self._geopend.setdefault(t["id"], []).append({"uid": uid, "tot": tot, "wie": wie})
+                self._geopend[t["id"]] = self._geopend[t["id"]][-5:]
+                n += 1
+        if n:
+            self.hass.async_create_task(self._wek())
+        return n
+
     def _open_fotovragen(self, tablet_id: str) -> list:
         lijst = [v for v in getattr(self, "_fotovragen", {}).get(tablet_id, []) if v["tot"] > time.time()]
         if hasattr(self, "_fotovragen"):
@@ -217,8 +234,12 @@ class Register:
         lijst = self._open_fotovragen(tablet_id)
         if hasattr(self, "_fotovragen"):
             self._fotovragen[tablet_id] = []
+        geopend = [v for v in getattr(self, "_geopend", {}).get(tablet_id, []) if v["tot"] > time.time()]
+        if hasattr(self, "_geopend"):
+            self._geopend[tablet_id] = []
         return {"foto": [v["uid"] for v in lijst],
-                "geopend": [{"uid": v["uid"], "wie": v.get("wie") or ""} for v in lijst if v.get("geopend")]}
+                "geopend": [{"uid": v["uid"], "wie": v.get("wie") or ""} for v in lijst if v.get("geopend")]
+                + [{"uid": v["uid"], "wie": v.get("wie") or ""} for v in geopend]}
 
     @property
     def versie(self) -> int:
@@ -267,11 +288,21 @@ class Register:
                       gezicht_drempel: float | str | None = None) -> dict:
         d = self.deur(deur_id)
         detail = []
+        # v0.15.2: eerst alles nakijken, dan pas wijzigen (geen half doorgevoerde wijziging zonder audit)
+        if camera and not camera.startswith("camera."):
+            raise ToegangFout("kies een camera entiteit")
+        if puls_s is not None and (not isinstance(puls_s, int) or not 0 <= puls_s <= 60):
+            raise ToegangFout("pulsduur is 0 tot 60 seconden")
+        if gezicht_drempel not in (None, "", 0, 0.0):
+            try:
+                g = round(float(gezicht_drempel), 2)
+            except (TypeError, ValueError) as e:
+                raise ToegangFout("strengheid gezicht is 0,60 tot 0,95") from e
+            if not 0.6 <= g <= 0.95:
+                raise ToegangFout("strengheid gezicht is 0,60 tot 0,95")
         if gezicht_drempel is not None:
             # schema 2: strengheid van de gezichtsherkenning op de tablets van deze deur ("" of 0 = de tablet beslist)
             nieuw = None if gezicht_drempel in ("", 0, 0.0) else round(float(gezicht_drempel), 2)
-            if nieuw is not None and not 0.5 <= nieuw <= 0.95:
-                raise ToegangFout("strengheid gezicht is 0,50 tot 0,95")
             if nieuw != d.get("gezicht_drempel"):
                 d["gezicht_drempel"] = nieuw
                 detail.append(f"strengheid gezicht {nieuw:.2f}" if nieuw is not None else "strengheid gezicht door de tablet")

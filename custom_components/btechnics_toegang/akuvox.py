@@ -374,6 +374,10 @@ class Akuvox:
         self.status["velden"] = sorted({k for x in lijst for k in x})[:40]
         gewenst = self._gewenst(dt_util.now())
         geschreven = False
+        if any(str(u.get("UserID")) == self.PROEF_USERID and str(u.get("Name")) == self.PROEF_NAAM for u in lijst):
+            # achtergebleven proefgebruiker (proef onderbroken): opruimen, hij kan een vrijgekomen DisplayID erven
+            await self._proef_opruimen(verslag)
+            verslag.pop("opruimfouten", None)
 
         # koppelingen die niet (meer) naar onze gebruiker wijzen loslaten: nooit een vreemde wissen of overschrijven
         for pid, info in list(eigen.items()):
@@ -618,7 +622,47 @@ class Akuvox:
                 break
         return list(uit.values())
 
+    PROEF_USERID = "799990"
+    PROEF_NAAM = "BTX proef"
+
+    async def _proef_opruimen(self, verslag: dict) -> int:
+        """Alles van de proeven weg: eerst de proefgebruiker 799990 (naam 'BTX proef'), dan de schema's 'BTX proef ...'.
+        Elke wissing apart in try, zodat één fout de rest niet tegenhoudt. Geeft het aantal gewiste schema's."""
+        fouten = verslag.setdefault("opruimfouten", [])
+        try:
+            for u in await self.gebruikers():
+                if str(u.get("UserID")) == self.PROEF_USERID and str(u.get("Name")) == self.PROEF_NAAM and u.get("ID"):
+                    try:
+                        await self._vraag("POST", "/api/user/del", {"target": "user", "action": "del", "data": {"item": [{"ID": str(u["ID"])}]}})
+                    except AkuvoxFout as e:
+                        fouten.append(f"proefgebruiker: {str(e)[:150]}")
+        except AkuvoxFout as e:
+            fouten.append(f"gebruikers lezen: {str(e)[:150]}")
+        n = 0
+        try:
+            for x in await self.schemas():
+                if str(x.get("Name", "")).startswith(self.PROEF_NAAM + " ") and x.get("ID") and str(x.get("Source", "Local")) == "Local":
+                    try:
+                        await self._vraag("POST", "/api/schedule/del", {"target": "schedule", "action": "del", "data": {"item": [{"ID": str(x["ID"])}]}})
+                        n += 1
+                    except AkuvoxFout as e:
+                        fouten.append(f"schema {x.get('Name')}: {str(e)[:150]}")
+        except AkuvoxFout as e:
+            fouten.append(f"schema's lezen: {str(e)[:150]}")
+        if not fouten:
+            verslag.pop("opruimfouten", None)
+        return n
+
+    def _proef_toegelaten(self) -> None:
+        if not self.aan:
+            raise AkuvoxFout("Akuvox sync staat uit: geen proef op dit toestel")
+
     async def async_schema_proef(self, items: list[dict] | None = None, gebruiker: bool = True) -> dict:
+        self._proef_toegelaten()
+        async with self._lock:   # nooit tegelijk met een sync
+            return await self._schema_proef(items, gebruiker)
+
+    async def _schema_proef(self, items: list[dict] | None = None, gebruiker: bool = True) -> dict:
         """v0.14.3 proef: welk schemaformaat aanvaardt dit toestel? Zet tijdelijke schema's met naam 'BTX proef',
         leest ze terug, koppelt er een tijdelijke eigen gebruiker 799990 aan, leest die terug en ruimt alles weer op.
         Raakt niets anders aan: wissen enkel op ID van items met die naam."""
@@ -636,17 +680,8 @@ class Akuvox:
                          for i, it in enumerate(items[:6])}
         verslag: dict[str, Any] = {"voor": [], "varianten": {}, "gebruiker": None, "na": []}
 
-        async def opruimen() -> list:
-            weg = [x for x in await self.schemas() if str(x.get("Name", "")).startswith(PROEF)]
-            for x in weg:
-                try:
-                    await self._vraag("POST", "/api/schedule/del", {"target": "schedule", "action": "del", "data": {"item": [{"ID": str(x.get("ID"))}]}})
-                except AkuvoxFout as e:
-                    verslag.setdefault("opruimfouten", []).append(str(e)[:200])
-            return weg
-
         verslag["voor"] = await self.schemas()
-        await opruimen()
+        await self._proef_opruimen(verslag)
         try:
             for naam, item in varianten.items():
                 r: dict[str, Any] = {"verstuurd": item}
@@ -671,21 +706,28 @@ class Akuvox:
                         g["antwoord"] = await self._vraag("POST", "/api/user/add", {"target": "user", "action": "add", "data": {"item": [gb]}})
                     except AkuvoxFout as e:
                         g["fout"] = str(e)[:300]
+                    verslag["gebruiker"] = g
                     terug = [u for u in await self.gebruikers() if str(u.get("UserID")) == "799990"]
                     g["teruggelezen"] = [{k: v for k, v in u.items() if k not in ("PrivatePIN", "CardCode", "BLE_AuthCode", "PhoneNum", "QrCodeUrl")} for u in terug]
-                    for u in terug:
-                        if u.get("Name") == PROEF:
-                            await self._vraag("POST", "/api/user/del", {"target": "user", "action": "del", "data": {"item": [{"ID": str(u.get("ID"))}]}})
-                    g["weg"] = not [u for u in await self.gebruikers() if str(u.get("UserID")) == "799990"]
-                    verslag["gebruiker"] = g
                 else:
                     verslag["gebruiker"] = "UserID 799990 bestaat al, niet aangeraakt"
         finally:
-            verslag["opgeruimd"] = len(await opruimen())
-            verslag["na"] = await self.schemas()
+            # altijd, ook bij een fout halverwege: eerst de proefgebruiker, dan de schema's
+            verslag["opgeruimd"] = await self._proef_opruimen(verslag)
+            try:
+                verslag["na"] = await self.schemas()
+                if isinstance(verslag.get("gebruiker"), dict):
+                    verslag["gebruiker"]["weg"] = not [u for u in await self.gebruikers() if str(u.get("UserID")) == self.PROEF_USERID]
+            except AkuvoxFout as e:
+                verslag.setdefault("opruimfouten", []).append(str(e)[:150])
         return verslag
 
     async def async_schema_volgorde(self) -> dict:
+        self._proef_toegelaten()
+        async with self._lock:
+            return await self._schema_volgorde()
+
+    async def _schema_volgorde(self) -> dict:
         """v0.15.1 meting: wat doet de S532 met DisplayID's bij wissen en toevoegen, en werkt schedule/set?
         Zet 'BTX proef A/B/C', wijzigt B, wist A, zet D, leest telkens terug en ruimt alles weer op."""
         P = "BTX proef "
@@ -698,28 +740,30 @@ class Akuvox:
             return ((j.get("data") or {}).get("item") or [{}])[0]
         stappen: dict[str, Any] = {}
         try:
-            for x in [x for x in await self.schemas() if str(x.get("Name", "")).startswith(P)]:
-                await self._vraag("POST", "/api/schedule/del", {"target": "schedule", "action": "del", "data": {"item": [{"ID": str(x.get("ID"))}]}})
+            await self._proef_opruimen(stappen)
             for n in ("A", "B", "C"):
                 await add(n)
             stappen["1_na_A_B_C"] = eigen(await self.schemas())
             b = stappen["1_na_A_B_C"].get(P + "B") or {}
+            a = stappen["1_na_A_B_C"].get(P + "A") or {}
+            if not b.get("ID") or not a.get("ID"):
+                raise AkuvoxFout("proefschema's niet aangemaakt, meting gestopt")
             try:
                 stappen["2_set_antwoord"] = await self._vraag("POST", "/api/schedule/set", {"target": "schedule", "action": "set", "data": {"item": [
                     {"ID": str(b.get("ID")), "DisplayID": str(b.get("DisplayID")), "Name": P + "B", "Type": "1", "Week": "06", "Daily": "10:00-11:00"}]}})
             except AkuvoxFout as e:
                 stappen["2_set_antwoord"] = str(e)
             stappen["2_na_set_B"] = eigen(await self.schemas())
-            a = stappen["1_na_A_B_C"].get(P + "A") or {}
             await self._vraag("POST", "/api/schedule/del", {"target": "schedule", "action": "del", "data": {"item": [{"ID": str(a.get("ID"))}]}})
             stappen["3_na_wissen_A"] = eigen(await self.schemas())
             await add("D")
             stappen["4_na_D"] = eigen(await self.schemas())
         finally:
-            weg = [x for x in await self.schemas() if str(x.get("Name", "")).startswith(P)]
-            for x in weg:
-                await self._vraag("POST", "/api/schedule/del", {"target": "schedule", "action": "del", "data": {"item": [{"ID": str(x.get("ID"))}]}})
-            stappen["5_opgeruimd"] = not eigen(await self.schemas())
+            await self._proef_opruimen(stappen)
+            try:
+                stappen["5_opgeruimd"] = not eigen(await self.schemas())
+            except AkuvoxFout as e:
+                stappen["5_opgeruimd"] = f"niet na te kijken: {e}"
         return stappen
 
     async def async_test(self) -> dict:
@@ -728,7 +772,7 @@ class Akuvox:
         eigen = {i["userid"] for i in self._staat["gebruikers"].values()}
         try:
             log = await self._vraag("GET", "/api/doorlog/get?page=1")
-            ruw_log = [{k: v for k, v in x.items() if k not in ("PicUrl", "Image")} for x in ((log.get("data") or {}).get("item") or [])[:6]]
+            ruw_log = [{k: v for k, v in x.items() if k not in ("PicUrl", "Image", "Code")} for x in ((log.get("data") or {}).get("item") or [])[:6]]
         except AkuvoxFout as e:
             ruw_log = [str(e)]
         geheim = ("PrivatePIN", "CardCode", "BLE_AuthCode", "PhoneNum", "QrCodeUrl")

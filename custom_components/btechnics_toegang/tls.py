@@ -61,7 +61,7 @@ def _vingerafdruk(certpad: Path) -> str:
 
 
 def kort(vinger: str | None) -> str:
-    return " ".join(vinger[i:i + 4].upper() for i in range(0, 16, 4)) if vinger else ""
+    return " ".join(vinger[i:i + 4].upper() for i in range(0, 32, 4)) if vinger else ""   # v0.15.2: 32 tekens, zoals de tablet
 
 
 class HttpsPoort:

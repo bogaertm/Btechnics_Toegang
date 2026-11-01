@@ -149,6 +149,13 @@ async def test_volledige_flow(opgezet):
     assert w.status == 200 and len(vraag) == 1 and vraag[0].startswith("ha-")
     # schema 2: de tablet hoort ook dat HA de deur opende (zelfde uid), om "Deur open" te tonen
     assert wj["geopend"] == [{"uid": vraag[0], "wie": ""}]
+    # v0.15.2: mislukt het openen, dan krijgt de tablet geen "Deur open" (wel de fotovraag)
+    from unittest.mock import AsyncMock, patch as _patch
+    with _patch.object(hass.data[DOMAIN]["toegang"], "async_deur_openen", AsyncMock(side_effect=RuntimeError("relais weg"))):
+        with pytest.raises(Exception):
+            await hass.services.async_call(DOMAIN, "deur_openen", {"deur": antw["deur_id"]}, blocking=True)
+    mis = reg.wacht_ophalen(antw["tablet_id"])
+    assert len(mis["foto"]) == 1 and mis["geopend"] == []
     r = await client.post(f"{API}/foto", headers=kop, json={"uid": vraag[0], "foto": base64.b64encode(b"\xff\xd8\xff\xd9").decode()})
     fid = (await r.json())["foto"]
     rijen = await hass.async_add_executor_job(arch.recent, antw["deur_id"], 10)

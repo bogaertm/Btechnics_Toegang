@@ -22,6 +22,14 @@ async def test_strengheid_per_deur(opgezet):
     assert lijst["deur"]["gezicht_drempel"] == 0.65 and lijst["versie"] > v
     with pytest.raises((HomeAssistantError, ServiceValidationError, Exception)):
         await dienst(hass, "deur_wijzigen", deur="Vergaderzaal", gezicht_drempel=0.3)
+    with pytest.raises((HomeAssistantError, ServiceValidationError, Exception)):
+        await dienst(hass, "deur_wijzigen", deur="Vergaderzaal", gezicht_drempel=0.55)   # v0.15.2: onder 0,60 geweigerd
+    # eerst nakijken, dan wijzigen: een foute camera laat ook de strengheid ongemoeid
+    reg = hass.data[DOMAIN]["register"]
+    did = reg.deur_op_naam("Vergaderzaal")["id"]
+    with pytest.raises(Exception):
+        reg.deur_wijzigen(did, gezicht_drempel=0.8, camera="sensor.x", wie="test")
+    assert reg.data["deuren"][did]["gezicht_drempel"] == 0.65
     await dienst(hass, "deur_wijzigen", deur="Vergaderzaal", gezicht_drempel="")
     lijst = await (await client.get(f"{API}/lijst", headers=kop)).json()
     assert lijst["deur"]["gezicht_drempel"] is None
@@ -67,6 +75,10 @@ async def test_app_update(opgezet, hass_client):
     r = await beheer.post(f"{API}/apk_upload?version_code=67&versie=1.73&sha256={hashlib.sha256(nieuw).hexdigest()}", data=nieuw)
     reg.gewijzigd = echt
     assert r.status == 200 and gezien == [nieuw]
+    # v0.15.2: geen achtergebleven tijdelijke bestanden, ook niet na een geweigerde upload
+    import os
+    map_ = os.path.dirname(apk_pad(hass))
+    assert [f for f in os.listdir(map_) if f.endswith(".tmp")] == []
     assert await (await client.get(f"{API}/apk", headers=kop)).read() == nieuw
     # via de tunnel geweigerd
     r = await beheer.post(f"{API}/apk_upload?version_code=68&versie=1.74&sha256={sha}", data=APK, headers={"Cf-Connecting-Ip": "1.2.3.4"})

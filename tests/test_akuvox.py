@@ -1,3 +1,4 @@
+import pytest
 import asyncio
 """Akuvox S532 sync tegen een nagebootst toestel: enkel eigen gebruikers vanaf 700001, SmartPlus blijft onaangeroerd."""
 from datetime import timedelta
@@ -307,3 +308,35 @@ def _randgevallen(si):
     assert si({"valid_until": "2026-11-04T22:59:00+00:00"})[0]["Date"] == "00000000-20261104"
     # einde om 00:00: niets meer over op de laatste dag
     assert si({"valid_until": "2026-11-04T00:00:00+01:00"}) == [{"Type": "0", "Week": "0123456", "Daily": "00:00-23:59", "Date": "00000000-20261103"}]
+
+
+async def test_proef_ruimt_altijd_op_en_sync_heelt(hass, aioclient_mock):
+    """Review 01/11 HA punten 2 en 3: achtergebleven proefgebruiker 799990 wordt opgeruimd door de sync; proef weigert als de sync uit staat."""
+    nep = NepAkuvox()
+    aioclient_mock.get(f"https://{IP}/api/user/get", side_effect=nep.get)
+    aioclient_mock.get(f"https://{IP}/api/schedule/get", side_effect=nep.get)
+    for a in ("add", "set", "del"):
+        aioclient_mock.post(f"https://{IP}/api/user/{a}", side_effect=nep.post)
+        aioclient_mock.post(f"https://{IP}/api/schedule/{a}", side_effect=nep.post)
+    entry = MockConfigEntry(domain=DOMAIN, data={})
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    deur = hass.data[DOMAIN]["register"].deur_toevoegen("Voordeur", wie="test")
+    hass.config_entries.async_update_entry(entry, options={"akuvox_aan": False, "akuvox_ip": IP, "akuvox_gebruiker": "api",
+                                                           "akuvox_wachtwoord": "geheim", "akuvox_deur": deur["id"]})
+    await hass.async_block_till_done()
+    ak = hass.data[DOMAIN]["akuvox"]
+    from custom_components.btechnics_toegang.akuvox import AkuvoxFout
+    with pytest.raises(AkuvoxFout):
+        await ak.async_schema_proef()
+    hass.config_entries.async_update_entry(entry, options={**entry.options, "akuvox_aan": True})
+    await hass.async_block_till_done()
+    ak = hass.data[DOMAIN]["akuvox"]
+    # onderbroken proef: gebruiker en schema blijven achter
+    nep.n += 1
+    nep.users[str(nep.n)] = {"ID": str(nep.n), "Name": "BTX proef", "UserID": "799990", "ScheduleRelay": "1-1;", "Source": "Local"}
+    nep.schemas["77"] = {"ID": "77", "DisplayID": "1", "Name": "BTX proef A", "Source": "Local", "Type": "1", "Week": "1", "Daily": "08:00-09:00"}
+    await ak.async_sync()
+    assert not [u for u in nep.users.values() if u["UserID"] == "799990"] and "77" not in nep.schemas
+    assert sorted(nep.users) == ["1", "2"]

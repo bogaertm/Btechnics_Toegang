@@ -61,7 +61,7 @@ Tablet app v1.72 aanvaardt schema 1 en 2. Eerst de app bijwerken, dan HA.
 | Wat | Waar | Inhoud |
 |---|---|---|
 | `gezicht_kdf` | GET /lijst | weg (was altijd null) |
-| `deur.gezicht_drempel` | GET /lijst | getal 0,50 tot 0,95 of null. Null: de tablet houdt zijn eigen strengheid. Instellen in HA bij Deur aanpassen of dienst deur_wijzigen `gezicht_drempel` ("" = terug naar de tablet) |
+| `deur.gezicht_drempel` | GET /lijst | getal 0,60 tot 0,95 of null (v0.15.2, was 0,50). Null: de tablet houdt zijn eigen strengheid. App v1.76 aanvaardt ook enkel 0,60 tot 0,95. Instellen in HA bij Deur aanpassen of dienst deur_wijzigen `gezicht_drempel` ("" = terug naar de tablet) |
 | `app` | GET /lijst | `{version_code, versie, sha256, grootte}` of null; nooit voor een gezichtsserver. Is version_code hoger dan de eigen versie, dan haalt de tablet GET /apk |
 | GET /apk | tablet (sleutel, https 8443) | het APK bestand (application/vnd.android.package-archive). De tablet controleert grootte, sha256, pakketnaam, versie en handtekening en installeert stil als toestelbeheerder, nooit tijdens een oproep |
 | POST /apk_upload | beheerder (HA token, enkel lokaal) | `?version_code=66&versie=1.72&sha256=<hex>` met de APK als body. HA rekent de sha256 zelf na en weigert een oudere versie (409) |
