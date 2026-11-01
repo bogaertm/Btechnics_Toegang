@@ -160,7 +160,9 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                       pin=c.get("pincode"), deuren=c.get("deuren"), schema=c.get("schema"), telefoon=c.get("telefoon"),
                       email=c.get("email"))
         if "geldig_van" in c or "geldig_tot" in c:
-            reg.geldigheid(wie, p["id"], c.get("geldig_van"), c.get("geldig_tot"))
+            # v0.15.3: wat niet meegegeven wordt, blijft zoals het was (vroeger wiste een halve wijziging de andere grens)
+            reg.geldigheid(wie, p["id"], c["geldig_van"] if "geldig_van" in c else p.get("valid_from"),
+                           c["geldig_tot"] if "geldig_tot" in c else p.get("valid_until"))
         return {"persoon": _publiek(p)}
 
     def _statusdienst(methode: str):

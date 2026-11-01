@@ -50,7 +50,7 @@ class Toegang:
         """Foto bij een toegang. Eerst een foto die de tablet al stuurde (POST /foto), anders een momentopname van de
         camera van de deur (enkel voor verse toegangen). Geeft het foto id terug (a_<hash>) of ""."""
         from .portaal import foto_pad
-        fid = foto_id(uid)
+        fid = foto_id(uid, deur_id)
         if await self.hass.async_add_executor_job(os.path.exists, foto_pad(self.hass, fid)):
             return fid
         deur = self.reg.data["deuren"].get(deur_id) or {}
@@ -82,7 +82,7 @@ class Toegang:
     async def async_tablet_foto(self, tablet: dict, uid: str, beeld: bytes) -> str:
         """Foto die de tablet nam bij een toegang. Staat de logregel er al, dan krijgt die meteen de foto."""
         from .portaal import foto_pad
-        fid = foto_id(uid)
+        fid = foto_id(uid, tablet["deur_id"])
         await self.hass.async_add_executor_job(_schrijf_foto, foto_pad(self.hass, fid), beeld)
         n = await self.hass.async_add_executor_job(self.archief.foto_zetten, uid, fid, tablet["deur_id"])
         if n:
@@ -169,10 +169,12 @@ class Toegang:
         for rij, regel in rijen:
             if rij["opened"] or rij.get("persoon_id") or rij["method"] not in ("code", "badge") or regel.get("reden") == "geblokkeerd":
                 continue
-            if rij["uid"] in self._geteld or nu - int(rij["ts"]) > POGING_VENSTER:
+            # v0.15.3: tellen op het moment van ontvangst (een tablet met een achterlopende klok ontsnapte vroeger);
+            # enkel pogingen van meer dan een uur geleden (wachtrij na offline) tellen niet mee
+            if rij["uid"] in self._geteld or nu - int(rij["ts"]) > 3600:
                 continue
             self._geteld = (self._geteld + [rij["uid"]])[-500:]
-            lijst.append(int(rij["ts"]))
+            lijst.append(nu)
         self._pogingen[deur_id] = lijst
         if len(lijst) < POGING_MAX:
             return
@@ -180,14 +182,29 @@ class Toegang:
         deur = self.reg.data["deuren"].get(deur_id)
         if not deur:
             return
-        tot = self.reg.klavier_blokkeren(deur_id, POGING_BLOK)
+        # v0.15.3: oplopende blokkering (1 min, 5 min, 30 min); terug naar 1 min na een uur zonder nieuwe blokkering
+        niveaus = getattr(self, "_blok_niveau", {})
+        self._blok_niveau = niveaus
+        vorig = niveaus.get(deur_id, (0, 0))
+        niveau = vorig[0] + 1 if nu - vorig[1] < 3600 else 1
+        niveaus[deur_id] = (niveau, nu)
+        seconden = [POGING_BLOK, 300, 1800][min(niveau, 3) - 1]
+        tot = self.reg.klavier_blokkeren(deur_id, seconden)
         from .melding import alarm
         alarm(
             self.hass, f"Deur **{deur['naam']}**: {len(lijst)} foute codes of badges binnen {POGING_VENSTER // 60} minuten. "
-            f"Het klavier van de tablet is {POGING_BLOK} seconden geblokkeerd (tot {tot[11:16]}).",
+            f"Het klavier van de tablet is {seconden // 60} minuten geblokkeerd (tot {tot[11:16]})."
+            + (" Let op: de Akuvox S532 zelf blokkeert niet, kijk wie er aan de deur staat." if self._is_akuvox(deur_id) else ""),
             title="Btechnics Toegang: te veel foute pogingen", notification_id=f"{DOMAIN}_pogingen_{deur_id}")
         self.hass.bus.async_fire(f"{DOMAIN}_te_veel_pogingen", {"deur_id": deur_id, "deur": deur["naam"], "aantal": len(lijst),
                                                                "geblokkeerd_tot": tot})
+
+    def _is_akuvox(self, deur_id: str) -> bool:
+        try:
+            from .akuvox import akuvox_voor_deur
+            return akuvox_voor_deur(self.hass, deur_id) is not None
+        except Exception:  # noqa: BLE001
+            return False
 
     async def _na_toevoegen(self, deur_id: str, rijen: list[tuple[dict, dict]]) -> None:
         self._foute_pogingen(deur_id, rijen)
@@ -241,8 +258,9 @@ class Toegang:
             self._puls[deur["id"]] = async_call_later(self.hass, puls, _uit)
 
 
-def foto_id(uid: str) -> str:
-    return "a_" + hashlib.sha1(str(uid).encode()).hexdigest()[:20]
+def foto_id(uid: str, deur_id: str = "") -> str:
+    """v0.15.3: de deur zit mee in het id, zodat een toestel van deur A nooit vooraf een foto voor deur B kan klaarzetten."""
+    return "a_" + hashlib.sha1(f"{deur_id}\n{uid}".encode()).hexdigest()[:20]
 
 
 def _schrijf_foto(pad: str, beeld: bytes) -> None:

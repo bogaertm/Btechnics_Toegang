@@ -300,3 +300,24 @@ async def test_zelfcontrole_en_offline_alarm(hass, aioclient_mock):
     titels = [n.get("title") or "" for n in persistent_notification._async_get_or_create_notifications(hass).values()]
     assert any("terug online" in t for t in titels) and not any(t.endswith("toestel offline") for t in titels)
     del reg.data["tablets"]["t_x"]
+
+
+async def test_halve_geldigheid_houdt_andere_grens(hass, aioclient_mock):
+    """Review 01/11 HA punt 1 en 9: enkel geldig_tot wijzigen laat geldig_van staan (en omgekeerd); een datum zonder uur
+    als einde = 23:59 van die dag."""
+    from datetime import timedelta
+    nep = NepAkuvox()
+    reg, ak, deur = await _opzet(hass, aioclient_mock, nep)
+    nu = dt_util.now()
+    van, tot = (nu + timedelta(days=3)).replace(microsecond=0), (nu + timedelta(days=10)).replace(microsecond=0)
+    p = reg.toevoegen("test", naam="Later Begin", pin="583920", deuren=[deur["id"]], valid_from=van.isoformat(), valid_until=tot.isoformat())
+    assert p["status"] == "blocked"   # wacht op begin
+    nieuw_tot = (nu + timedelta(days=12)).date().isoformat()
+    await hass.services.async_call(DOMAIN, "persoon_wijzigen", {"persoon": p["id"], "geldig_tot": nieuw_tot}, blocking=True, return_response=True)
+    q = reg.data["personen"][p["id"]]
+    assert q["valid_from"] and q["status"] == "blocked"
+    assert q["valid_until"].startswith(nieuw_tot + "T23:59")
+    await hass.services.async_call(DOMAIN, "persoon_wijzigen", {"persoon": p["id"], "geldig_van": (nu + timedelta(days=2)).isoformat()},
+                                   blocking=True, return_response=True)
+    q = reg.data["personen"][p["id"]]
+    assert q["valid_until"].startswith(nieuw_tot + "T23:59") and q["status"] == "blocked"

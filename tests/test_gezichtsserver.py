@@ -51,6 +51,9 @@ async def test_gezichtsserver(hass_klaar, hass_ws_client, hass_client_no_auth):
     aes = priv.decrypt(base64.b64decode(gz["sleutel"]), OAEP)
     klaar = json.loads(AESGCM(aes).decrypt(base64.b64decode(gz["iv"]), base64.b64decode(gz["data"]), gz["aad"].encode()))
     assert len(klaar["afdrukken"]) == 4 and gz["toestemming"] == "v2"
+    # v0.15.3: de gezichtsserver krijgt geen code- of badgehashes
+    lp = (await (await client.get(f"{API}/lijst", headers=kop)).json())["personen"]
+    assert all(x["pin"] is None and x["kaarten"] == [] for x in lp)
     # herkend, maar de deur staat nog op proef: HA weigert, ook als de server zelf live staat
     pid = gz["aad"].split(":", 1)[1]
     r = await client.post(f"{API}/open", headers=kop, json={"methode": "gezicht", "persoon_id": pid, "log": False})
@@ -60,14 +63,19 @@ async def test_gezichtsserver(hass_klaar, hass_ws_client, hass_client_no_auth):
     assert r.status == 403 and (await r.json())["reden"] == "niet_toegelaten"
     # beheerder zet de gezichtsserver live voor deze deur
     await hass.services.async_call(DOMAIN, "deur_wijzigen", {"deur": "Vergaderzaal", "gezicht_live": True}, blocking=True)
-    r = await client.post(f"{API}/open", headers=kop, json={"methode": "gezicht", "persoon_id": pid, "log": False})
+    # v0.15.3: HA kijkt de score zelf na (minstens 0,70): zonder of met een te lage score blijft de deur dicht
+    for body in ({"methode": "gezicht", "persoon_id": pid, "log": False},
+                 {"methode": "gezicht", "persoon_id": pid, "log": False, "score": 0.62}):
+        r = await client.post(f"{API}/open", headers=kop, json=body)
+        assert r.status == 403 and (await r.json())["reden"] == "score_te_laag" and not oproepen
+    r = await client.post(f"{API}/open", headers=kop, json={"methode": "gezicht", "persoon_id": pid, "log": False, "score": 0.83})
     assert r.status == 200 and (await r.json())["geopend"] is True
     await hass.async_block_till_done()
     assert len(oproepen) == 1
     recent = hass.data[DOMAIN]["toegang"].recent[deur]
     assert recent[0]["method"] == "gezicht" and recent[0]["name"] == "Lien Maes" and recent[0]["opened"]
     # onbekende persoon: geweigerd, deur blijft dicht
-    r = await client.post(f"{API}/open", headers=kop, json={"methode": "gezicht", "persoon_id": "p_bestaatniet", "log": False})
+    r = await client.post(f"{API}/open", headers=kop, json={"methode": "gezicht", "persoon_id": "p_bestaatniet", "log": False, "score": 0.9})
     assert r.status == 403 and (await r.json())["reden"] == "onbekend" and len(oproepen) == 1
 
 

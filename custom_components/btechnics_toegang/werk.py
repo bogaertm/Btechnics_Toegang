@@ -194,7 +194,10 @@ class Werk:
 
     def geldigheid(self, wie: str, v: dict) -> dict:
         p = self._persoon(v["werk_id"])
-        self.reg.geldigheid(wie, p["id"], v.get("geldig_van") or None, v.get("geldig_tot") or None)
+        # v0.15.3: ontbrekend veld = huidige waarde houden; enkel "" of null wist een grens
+        van = (v.get("geldig_van") or None) if "geldig_van" in v else p.get("valid_from")
+        tot = (v.get("geldig_tot") or None) if "geldig_tot" in v else p.get("valid_until")
+        self.reg.geldigheid(wie, p["id"], van, tot)
         return {"medewerker": self._medewerker(p)}
 
     def blokkeren(self, wie: str, v: dict) -> dict:

@@ -53,3 +53,11 @@ async def test_te_veel_foute_codes(hass, hass_client_no_auth):
     r = await client.post(f"{API}/open", headers=kop, json={"methode": "pin", "persoon_id": pid})
     assert r.status == 200
     assert (await (await client.get(f"{API}/lijst", headers=kop)).json())["deur"]["klavier_tot"] is None
+    # v0.15.3: tweede reeks binnen het uur = 5 minuten; achterlopende klok van de tablet ontsnapt niet meer
+    events.clear()
+    oud = lambda i: {**fout(100 + i), "tijd": (nu - timedelta(minutes=10)).isoformat()}  # noqa: E731
+    await client.post(f"{API}/log", headers=kop, json={"items": [oud(i) for i in range(5)]})
+    await hass.async_block_till_done()
+    assert len(events) == 1
+    tot = dt_util.parse_datetime(events[0].data["geblokkeerd_tot"])
+    assert timedelta(minutes=4) < tot - dt_util.now() <= timedelta(minutes=5, seconds=5)

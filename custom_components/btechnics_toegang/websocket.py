@@ -214,7 +214,7 @@ async def ws_manage_list(hass, connection, msg):
     invites = [{"id": u["id"], "naam": u["naam"], "deuren": [reg.data["deuren"].get(d, {}).get("naam", d) for d in u["deuren"]],
                 "verloopt": u["verloopt"], "gemaakt": u["gemaakt"], "door": u.get("door"),
                 "valid_from": u.get("valid_from"), "valid_until": u.get("valid_until")}
-               for u in reg.data["uitnodigingen"].values() if not u.get("gebruikt") and u["verloopt"] > nu]
+               for u in reg.data["uitnodigingen"].values() if not u.get("gebruikt") and dt_util.parse_datetime(u["verloopt"]) > dt_util.now()]
     connection.send_result(msg["id"], {"doors": _doors(reg), "entries": entries,
                                        "audit": list(reversed(reg.data["audit"][-200:])), "unknown_cards": [],
                                        "invites": invites, "pin": {"min": 4, "max": 8}})
@@ -332,7 +332,7 @@ def ws_user_add(hass, connection, msg):
         connection.send_error(msg["id"], "not_ready", "nog niet klaar")
         return
     try:
-        vuntil = tijdstip(msg["valid_until"])
+        vuntil = tijdstip(msg["valid_until"], einde=True)
         vfrom = tijdstip(msg["valid_from"]) if msg.get("valid_from") else None
     except ToegangFout as e:
         connection.send_error(msg["id"], "invalid_format", str(e))

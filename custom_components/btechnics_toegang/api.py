@@ -143,7 +143,8 @@ class LijstView(_TabletView):
         if not tablet:
             return _fout(HTTPStatus.UNAUTHORIZED, "niet gekoppeld")
         reg = _reg(request.app[KEY_HASS])
-        etag = f'"{reg.versie}-{(tablet.get("pubkey_id") or "")[:12]}"'
+        # v0.15.3: ook deur en toestel in de ETag (een opnieuw gekoppeld toestel aan een andere deur krijgt nooit een 304)
+        etag = f'"{reg.versie}-{tablet["deur_id"][-6:]}-{tablet["id"][-6:]}-{(tablet.get("pubkey_id") or "")[:12]}"'
         if request.headers.get("If-None-Match") == etag:
             return web.Response(status=HTTPStatus.NOT_MODIFIED, headers={"ETag": etag})
         try:
@@ -248,9 +249,17 @@ class OpenView(_TabletView):
                 return web.json_response({"geopend": False, "reden": "niet_toegelaten"}, status=HTTPStatus.FORBIDDEN)
             if not deur.get("gezicht_live"):
                 return web.json_response({"geopend": False, "reden": "proef"}, status=HTTPStatus.FORBIDDEN)
+            # v0.15.3: HA kijkt zelf de score na: minstens max(0,70, strengheid van de deur), ongeacht wat de server vindt
+            try:
+                score = float(data.get("score"))
+            except (TypeError, ValueError):
+                score = -1.0
+            if score < max(0.70, float(deur.get("gezicht_drempel") or 0)):
+                return web.json_response({"geopend": False, "reden": "score_te_laag"}, status=HTTPStatus.FORBIDDEN)
         persoon = reg.data["personen"].get(data.get("persoon_id") or "")
         reden = None
-        if methode in ("pin", "kaart") and (deur.get("klavier_tot") or "") > dt_util.now().isoformat(timespec="seconds"):
+        kt = dt_util.parse_datetime(deur.get("klavier_tot") or "") if deur.get("klavier_tot") else None
+        if methode in ("pin", "kaart") and kt is not None and kt > dt_util.now():   # v0.15.3: tijdstippen vergelijken, geen tekst (winteruur)
             reden = "geblokkeerd"   # te veel foute pogingen: HA weigert ook als de tablet het klavier niet dichtzet
         elif methode in ("pin", "kaart", "gezicht"):
             if not persoon or tablet["deur_id"] not in persoon["deuren"]:

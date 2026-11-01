@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import re
 import hmac
 import secrets
 import time
@@ -61,20 +62,22 @@ def _iso(t: datetime | None) -> str | None:
     return dt_util.as_local(t).replace(microsecond=0).isoformat() if t else None
 
 
-def tijdstip(v: Any) -> datetime | None:
-    """Tijdstip uit tekst of datetime; zonder tijdzone = tijdzone van Home Assistant."""
+def tijdstip(v: Any, einde: bool = False) -> datetime | None:
+    """Tijdstip uit tekst of datetime; zonder tijdzone = tijdzone van Home Assistant.
+    v0.15.3: einde=True en enkel een datum (zonder uur) = 23:59 van die dag, niet 00:00 (anders een dag te vroeg weg)."""
     if v in (None, ""):
         return None
     if isinstance(v, datetime):
         t = v
     else:
-        t = dt_util.parse_datetime(str(v))
+        # enkel een datum: dt_util.parse_datetime maakt daar zelf 00:00 van, daarom eerst apart herkennen
+        t = None if re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(v).strip()) else dt_util.parse_datetime(str(v))
         if t is None:
             try:
-                d = date.fromisoformat(str(v))
+                d = date.fromisoformat(str(v).strip())
             except ValueError as e:
                 raise ToegangFout(f"ongeldig tijdstip: {v}") from e
-            t = datetime(d.year, d.month, d.day)
+            t = datetime(d.year, d.month, d.day, 23, 59) if einde else datetime(d.year, d.month, d.day)
     if t.tzinfo is None:
         t = t.replace(tzinfo=dt_util.get_default_time_zone())
     return dt_util.as_local(t)
@@ -477,7 +480,7 @@ class Register:
         if not ids:
             raise ToegangFout("kies minstens een deur")
         nu = _nu()
-        vf, vu = tijdstip(valid_from), tijdstip(valid_until)
+        vf, vu = tijdstip(valid_from), tijdstip(valid_until, einde=True)
         if vu and vu <= nu:
             raise ToegangFout("het einde van de geldigheid ligt in het verleden")
         if vf and vu and vu <= vf:
@@ -553,7 +556,7 @@ class Register:
         if p["status"] == "retired":
             raise ToegangFout(f"'{p['naam']}' is uit dienst: eerst herstellen")
         nu = _nu()
-        vf, vu = tijdstip(valid_from), tijdstip(valid_until)
+        vf, vu = tijdstip(valid_from), tijdstip(valid_until, einde=True)
         oud_vu = tijdstip(p.get("valid_until"))
         if vu and vu <= nu and vu != oud_vu:
             raise ToegangFout("het einde van de geldigheid ligt in het verleden")
@@ -631,7 +634,7 @@ class Register:
         """Uit dienst terug actief. Was de geldigheid verlopen, dan is een nieuwe einddatum verplicht."""
         p = self.persoon(pid)
         if valid_until:
-            vu = tijdstip(valid_until)
+            vu = tijdstip(valid_until, einde=True)
             if not vu or vu <= _nu():
                 raise ToegangFout("De nieuwe einddatum moet in de toekomst liggen.")
             p["valid_until"] = _iso(vu)
@@ -693,6 +696,7 @@ class Register:
     def lijst_voor_deur(self, deur_id: str, tablet: dict | None = None) -> dict:
         d = self.deur(deur_id)
         kid = (tablet or {}).get("pubkey_id")
+        server = (tablet or {}).get("soort") == "server"   # v0.15.3: de gezichtsserver krijgt geen code- of badgehashes
         personen = []
         for p in self.data["personen"].values():
             if p["status"] != "active" or deur_id not in p["deuren"]:
@@ -703,15 +707,15 @@ class Register:
                 "van": vf.date().isoformat() if vf else None, "tot": vu.date().isoformat() if vu else None,
                 "geldig_van": p.get("valid_from"), "geldig_tot": p.get("valid_until"),
                 "schema": p["schema"],
-                "pin": {"zout": p["pin_zout"], "hash": p["pin_hash"], "lengte": len(p["pin"])} if p.get("pin") else None,
-                "kaarten": [{"zout": k["zout"], "hash": k["hash"]} for k in p["kaarten"]],
+                "pin": {"zout": p["pin_zout"], "hash": p["pin_hash"], "lengte": len(p["pin"])} if p.get("pin") and not server else None,
+                "kaarten": [] if server else [{"zout": k["zout"], "hash": k["hash"]} for k in p["kaarten"]],
                 "gezicht": self._gezicht_voor(p, kid),
             })
         personen.sort(key=lambda x: x["naam"].lower())
         app = self.data.get("app") if (tablet or {}).get("soort", "tablet") != "server" else None
         return {"schema": 2, "versie": self.versie, "gemaakt": _iso(_nu()),
                 "deur": {**{k: d[k] for k in ("id", "naam", "modus", "modus_sinds", "modus_door")},
-                         "klavier_tot": d.get("klavier_tot") if (d.get("klavier_tot") or "") > _iso(_nu()) else None,
+                         "klavier_tot": d.get("klavier_tot") if d.get("klavier_tot") and tijdstip(d["klavier_tot"]) > _nu() else None,
                          "gezicht_drempel": d.get("gezicht_drempel")},
                 "hash": {"algoritme": "sha256-iter", "rondes": 2000}, "personen": personen,
                 "app": {k: app[k] for k in ("version_code", "versie", "sha256", "grootte")} if app else None}
@@ -1012,7 +1016,7 @@ class Register:
         ids = self._deuren_ids(deuren)
         if not ids:
             raise ToegangFout("kies minstens een deur")
-        vf, vu = tijdstip(valid_from), tijdstip(valid_until)
+        vf, vu = tijdstip(valid_from), tijdstip(valid_until, einde=True)
         if vu and vu <= _nu():
             raise ToegangFout("het einde van de geldigheid ligt in het verleden")
         if vf and vu and vu <= vf:
@@ -1111,7 +1115,7 @@ class Register:
     def uitnodiging_bruikbaar(self, u: dict) -> str | None:
         if u.get("gebruikt"):
             return "Deze uitnodiging is al gebruikt."
-        if (u.get("verloopt") or "") < _iso(_nu()):
+        if not u.get("verloopt") or tijdstip(u["verloopt"]) < _nu():   # v0.15.3: tijdstippen, geen tekst (winteruur)
             return "Deze uitnodiging is verlopen. Vraag een nieuwe link."
         if u.get("fouten", 0) >= PORTAAL_FOUTEN_MAX:
             return "Deze uitnodiging is geblokkeerd na te veel pogingen. Vraag een nieuwe link."
