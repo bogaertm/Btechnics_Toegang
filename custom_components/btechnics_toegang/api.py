@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
 import logging
+import os
 from http import HTTPStatus
 from typing import Any
 
@@ -121,9 +123,11 @@ class WachtView(_TabletView):
         reg = _reg(request.app[KEY_HASS])
         if await reg.wacht_op_versie(versie, WACHT_MAX, tablet["id"]):
             antwoord = {"versie": reg.versie}
-            fotos = reg.fotovragen_ophalen(tablet["id"])
-            if fotos:
-                antwoord["foto"] = fotos   # HA opende de deur: neem nu een foto en stuur ze met deze uid naar POST /foto
+            vragen = reg.wacht_ophalen(tablet["id"])
+            if vragen["foto"]:
+                antwoord["foto"] = vragen["foto"]   # HA opende de deur: neem nu een foto en stuur ze met deze uid naar POST /foto
+            if vragen["geopend"]:
+                antwoord["geopend"] = vragen["geopend"]   # schema 2: de tablet toont "Deur open" met het deurgeluid
             return self.json(antwoord)
         return web.Response(status=HTTPStatus.NO_CONTENT)
 
@@ -299,9 +303,87 @@ class HerverpakView(_TabletView):
         return self.json({"ok": True, "nieuw": n})
 
 
-TABLET_VIEWS = (KoppelView, WachtView, LijstView, LogView, FotoView, ModusView, StatusView, OpenView, HerverpakView)
+APK_MAX = 150 * 1024 * 1024
+
+
+def apk_pad(hass: HomeAssistant) -> str:
+    return hass.config.path(DOMAIN, "apk", "btechnics-deur.apk")
+
+
+class ApkView(_TabletView):
+    """Schema 2: de tablet haalt de update die in de lijst staat ("app"). Enkel tablets, met de tabletsleutel."""
+    url = f"{API}/apk"
+    name = f"api:{DOMAIN}:apk"
+
+    async def get(self, request: web.Request) -> web.StreamResponse:
+        tablet = self._tablet(request)
+        if not tablet:
+            return _fout(HTTPStatus.UNAUTHORIZED, "niet gekoppeld")
+        if tablet.get("soort", "tablet") == "server":
+            return _fout(HTTPStatus.FORBIDDEN, "enkel voor tablets")
+        app = _reg(request.app[KEY_HASS]).data.get("app")
+        pad = apk_pad(request.app[KEY_HASS])
+        if not app or not os.path.isfile(pad):
+            return _fout(HTTPStatus.NOT_FOUND, "geen update klaar")
+        _LOGGER.info("Tablet %s haalt app %s", tablet["naam"], app.get("versie"))
+        return web.FileResponse(pad, headers={"Content-Type": "application/vnd.android.package-archive"})
+
+
+class ApkUploadView(HomeAssistantView):
+    """Beheerder zet een nieuwe versie van de app klaar: POST /api/btechnics_toegang/apk_upload?version_code=66&versie=1.72&sha256=<hex>
+    met de APK als body (HA token van een beheerder). HA rekent zelf de sha256 na; bij een verschil wordt niets bewaard."""
+    url = f"{API}/apk_upload"
+    name = f"api:{DOMAIN}:apk_upload"
+    requires_auth = True
+
+    async def post(self, request: web.Request) -> web.Response:
+        hass = request.app[KEY_HASS]
+        _niet_via_internet(request)
+        user = request.get("hass_user")
+        if user is None or not user.is_admin:
+            return _fout(HTTPStatus.FORBIDDEN, "enkel een beheerder")
+        try:
+            vc = int(request.query.get("version_code", ""))
+        except ValueError:
+            return _fout(HTTPStatus.BAD_REQUEST, "version_code ontbreekt")
+        versie = request.query.get("versie", str(vc))
+        verwacht = request.query.get("sha256", "").lower()
+        if len(verwacht) != 64:
+            return _fout(HTTPStatus.BAD_REQUEST, "sha256 ontbreekt")
+        pad = apk_pad(hass)
+        tmp = pad + ".tmp"
+        await hass.async_add_executor_job(lambda: os.makedirs(os.path.dirname(pad), exist_ok=True))
+        h = hashlib.sha256()
+        grootte = 0
+        bestand = await hass.async_add_executor_job(open, tmp, "wb")
+        try:
+            async for stuk in request.content.iter_chunked(1024 * 256):
+                grootte += len(stuk)
+                if grootte > APK_MAX:
+                    raise ValueError("te groot")
+                h.update(stuk)
+                await hass.async_add_executor_job(bestand.write, stuk)
+        except ValueError as e:
+            await hass.async_add_executor_job(bestand.close)
+            await hass.async_add_executor_job(os.remove, tmp)
+            return _fout(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, str(e))
+        await hass.async_add_executor_job(bestand.close)
+        if h.hexdigest() != verwacht or grootte < 1024:
+            await hass.async_add_executor_job(os.remove, tmp)
+            return _fout(HTTPStatus.BAD_REQUEST, "sha256 klopt niet met wat ontvangen werd")
+        try:
+            app = _reg(hass).apk_zetten(vc, versie, verwacht, grootte, os.path.basename(pad), wie=user.name or "")
+        except ToegangFout as e:
+            await hass.async_add_executor_job(os.remove, tmp)
+            return _fout(HTTPStatus.CONFLICT, str(e))
+        await hass.async_add_executor_job(os.replace, tmp, pad)
+        return self.json({"ok": True, **{k: app[k] for k in ("version_code", "versie", "sha256", "grootte")}})
+
+
+TABLET_VIEWS = (KoppelView, WachtView, LijstView, LogView, FotoView, ModusView, StatusView, OpenView, HerverpakView, ApkView)
 
 
 def registreer_views(hass: HomeAssistant) -> None:
     for view in TABLET_VIEWS:
         hass.http.register_view(view())
+    hass.http.register_view(ApkUploadView())

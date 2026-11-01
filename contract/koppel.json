@@ -8,13 +8,13 @@
     "pubkey": "<SPKI DER base64>"
   },
   "antwoord": {
-    "tablet_id": "t_a3798b",
-    "deur_id": "d_965cd8",
-    "sleutel": "YnoOFkNU0XvgGQxz5mh5T83aXiqQTJ9bmZM6c34dWBI",
+    "tablet_id": "t_2c574a",
+    "deur_id": "d_b91693",
+    "sleutel": "oOzCOOu1vq8Ma4h-FMOT5DqZqjQuiBJ0gfYi6AC1xe4",
     "pubkey_id": "19cee8eea832e61bcc8ff934775676727b53b2173da059af2abf57c00ae9a4fd",
     "https": {
       "poort": 8443,
-      "sha256": "536129ffd6ea2b0f70f1287c4c96f4ad39a434fd319b25f316ad908de7b15d09"
+      "sha256": "0e5758b5c04f04448d576d033ff9344b4cc8be6c908fef4aea7a9581d6fe6662"
     }
   },
   "fout_antwoord": {

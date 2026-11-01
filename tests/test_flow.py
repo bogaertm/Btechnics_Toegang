@@ -64,7 +64,7 @@ async def test_volledige_flow(opgezet):
     assert r.status == 200
     etag = r.headers["ETag"]
     lijst = await r.json()
-    assert lijst["schema"] == 1 and lijst["deur"]["naam"] == "Vergaderzaal" and lijst["deur"]["modus"] == "open"
+    assert lijst["schema"] == 2 and "gezicht_kdf" not in lijst and lijst["app"] is None and lijst["deur"]["gezicht_drempel"] is None and lijst["deur"]["naam"] == "Vergaderzaal" and lijst["deur"]["modus"] == "open"
     assert [p["naam"] for p in lijst["personen"]] == ["Jan Peeters"]
     pin = lijst["personen"][0]["pin"]
     assert pin["lengte"] == 4 and len(pin["zout"]) == 24
@@ -144,8 +144,11 @@ async def test_volledige_flow(opgezet):
     v = reg.versie
     await hass.services.async_call(DOMAIN, "deur_openen", {"deur": antw["deur_id"]}, blocking=True)
     w = await client.get(f"{API}/wacht?versie={reg.versie}", headers=kop)
-    vraag = (await w.json())["foto"]
+    wj = await w.json()
+    vraag = wj["foto"]
     assert w.status == 200 and len(vraag) == 1 and vraag[0].startswith("ha-")
+    # schema 2: de tablet hoort ook dat HA de deur opende (zelfde uid), om "Deur open" te tonen
+    assert wj["geopend"] == [{"uid": vraag[0], "wie": ""}]
     r = await client.post(f"{API}/foto", headers=kop, json={"uid": vraag[0], "foto": base64.b64encode(b"\xff\xd8\xff\xd9").decode()})
     fid = (await r.json())["foto"]
     rijen = await hass.async_add_executor_job(arch.recent, antw["deur_id"], 10)

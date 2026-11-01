@@ -97,7 +97,8 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         reg = reg_()
         d = reg.deur_wijzigen(reg.deur_op_naam(call.data["deur"])["id"], call.data.get("naam"),
                               call.data.get("open_entiteit"), wie=await _wie(hass, call), puls_s=call.data.get("puls_s"),
-                              camera=call.data.get("camera"), gezicht_live=call.data.get("gezicht_live"))
+                              camera=call.data.get("camera"), gezicht_live=call.data.get("gezicht_live"),
+                              gezicht_drempel=call.data.get("gezicht_drempel"))
         _herlaad_entiteiten(hass)
         return {"deur": d}
 
@@ -114,7 +115,8 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         wie = await _wie(hass, call)
         # eerst de fotovraag naar de tablet: die maakt zijn camera klaar terwijl het relais schakelt
         uid = f"ha-{uuid.uuid4()}"
-        d["register"].foto_vragen(deur["id"], uid)
+        voornaam = "" if wie in ("automatisch", "onbekend") else (wie.split() or [""])[0]
+        d["register"].foto_vragen(deur["id"], uid, geopend=True, wie=voornaam)
         try:
             await d["toegang"].async_deur_openen(deur)
         except ToegangFout:
@@ -287,7 +289,8 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                                                        vol.Optional("open_entiteit"): vol.Any("", cv.entity_id),
                                                        vol.Optional("puls_s"): vol.All(vol.Coerce(int), vol.Range(min=0, max=60)),
                                                        vol.Optional("camera"): vol.Any("", cv.entity_id),
-                                                       vol.Optional("gezicht_live"): cv.boolean}),
+                                                       vol.Optional("gezicht_live"): cv.boolean,
+                                                       vol.Optional("gezicht_drempel"): vol.Any("", vol.All(vol.Coerce(float), vol.Range(min=0, max=0.95)))}),
            SupportsResponse.OPTIONAL)
     dienst("deur_verwijderen", deur_verwijderen, vol.Schema({vol.Required("deur"): cv.string}))
     dienst("deur_openen", deur_openen, vol.Schema({vol.Required("deur"): cv.string}))

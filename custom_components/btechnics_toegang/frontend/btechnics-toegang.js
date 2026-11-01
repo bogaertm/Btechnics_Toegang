@@ -364,6 +364,11 @@ class BtxToegang extends HTMLElement {
         ${this._cameras().map((x) => `<option value="${esc(x.id)}" ${d && x.id === d.camera ? "selected" : ""}>${esc(x.naam)} (${esc(x.id)})</option>`).join("")}</select></div>
       ${d && this._data.tablets.some((t) => t.deur_id === d.id && t.soort === "server") ? `<div class="lbl">Gezichtsserver</div>
       <div class="row"><label style="display:flex;gap:8px;align-items:center"><input id="fgez" type="checkbox" ${d.gezicht_live ? "checked" : ""}> De gezichtsserver mag deze deur openen (anders enkel proef: meten, nooit openen)</label></div>` : ""}
+      ${d && this._data.tablets.some((t) => t.deur_id === d.id && t.soort !== "server") ? `<div class="lbl">Strengheid gezichtsherkenning op de tablet (hoger is strenger)</div>
+      <div class="row"><select id="fdrempel" style="min-width:260px">
+        ${[["", "Zoals ingesteld op de tablet"], ["0.8", "Streng (0,80)"], ["0.72", "Normaal (0,72)"], ["0.65", "Soepel (0,65)"]]
+          .map(([v, n]) => `<option value="${v}" ${String(d.gezicht_drempel == null ? "" : d.gezicht_drempel) === v ? "selected" : ""}>${n}</option>`).join("")}
+        ${d.gezicht_drempel != null && ![0.8, 0.72, 0.65].includes(d.gezicht_drempel) ? `<option value="${d.gezicht_drempel}" selected>${d.gezicht_drempel}</option>` : ""}</select></div>` : ""}
       <div class="row"><button class="btn primary" id="fbewaar">${d ? "Bewaren" : "Deur toevoegen"}</button><button class="btn" id="fannuleer">Annuleren</button>
         ${d ? `<span style="flex:1"></span><button class="btn danger" id="fweg"><ha-icon icon="mdi:delete"></ha-icon> Deur verwijderen</button>` : ""}</div>`);
     p.querySelector("#fannuleer").addEventListener("click", () => this._sluit());
@@ -375,6 +380,7 @@ class BtxToegang extends HTMLElement {
       this._doe(async () => {
         if (d) {
           const extra = p.querySelector("#fgez") ? { gezicht_live: p.querySelector("#fgez").checked } : {};
+          if (p.querySelector("#fdrempel")) extra.gezicht_drempel = p.querySelector("#fdrempel").value;
           if (extra.gezicht_live && !d.gezicht_live && !confirm("Gezichtsserver echt laten openen? Enkel doen na metingen met vreemden en een test met foto en scherm.")) return;
           await this._dienst("deur_wijzigen", { deur: d.id, naam, open_entiteit: ent, puls_s: puls, camera: cam, ...extra }, true);
         }

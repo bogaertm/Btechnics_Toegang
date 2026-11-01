@@ -7,7 +7,7 @@
         "tijd": "2026-10-17T16:30:00+02:00",
         "soort": "toegang",
         "methode": "pin",
-        "persoon_id": "p_780f61",
+        "persoon_id": "p_94169f",
         "tekst": "met code"
       },
       {
@@ -24,7 +24,7 @@
         "soort": "geweigerd",
         "methode": "gezicht",
         "reden": "vermoedelijke_foto",
-        "persoon_id": "p_7e6c6c",
+        "persoon_id": "p_4a0cf6",
         "score": 0.12
       },
       {

@@ -188,7 +188,7 @@ class Register:
 
     # ------------------------------------------------------------------ foto vragen aan de tablet
 
-    def foto_vragen(self, deur_id: str, uid: str) -> int:
+    def foto_vragen(self, deur_id: str, uid: str, geopend: bool = False, wie: str = "") -> int:
         """HA opende de deur zelf (op afstand): vraag de tablets van die deur om een foto met deze uid (30 s geldig)."""
         if not hasattr(self, "_fotovragen"):
             self._fotovragen = {}
@@ -196,7 +196,7 @@ class Register:
         n = 0
         for t in self.data["tablets"].values():
             if t["deur_id"] == deur_id:
-                self._fotovragen.setdefault(t["id"], []).append({"uid": uid, "tot": tot})
+                self._fotovragen.setdefault(t["id"], []).append({"uid": uid, "tot": tot, "geopend": geopend, "wie": wie})
                 self._fotovragen[t["id"]] = self._fotovragen[t["id"]][-5:]
                 n += 1
         if n:
@@ -210,10 +210,15 @@ class Register:
         return lijst
 
     def fotovragen_ophalen(self, tablet_id: str) -> list[str]:
+        return self.wacht_ophalen(tablet_id)["foto"]
+
+    def wacht_ophalen(self, tablet_id: str) -> dict:
+        """Wat de tablet bij /wacht moet doen: foto's nemen en (schema 2) melden dat HA de deur opende."""
         lijst = self._open_fotovragen(tablet_id)
         if hasattr(self, "_fotovragen"):
             self._fotovragen[tablet_id] = []
-        return [v["uid"] for v in lijst]
+        return {"foto": [v["uid"] for v in lijst],
+                "geopend": [{"uid": v["uid"], "wie": v.get("wie") or ""} for v in lijst if v.get("geopend")]}
 
     @property
     def versie(self) -> int:
@@ -258,9 +263,18 @@ class Register:
         return d
 
     def deur_wijzigen(self, deur_id: str, naam: str | None = None, open_entiteit: str | None = None, wie: str = "",
-                      puls_s: int | None = None, camera: str | None = None, gezicht_live: bool | None = None) -> dict:
+                      puls_s: int | None = None, camera: str | None = None, gezicht_live: bool | None = None,
+                      gezicht_drempel: float | str | None = None) -> dict:
         d = self.deur(deur_id)
         detail = []
+        if gezicht_drempel is not None:
+            # schema 2: strengheid van de gezichtsherkenning op de tablets van deze deur ("" of 0 = de tablet beslist)
+            nieuw = None if gezicht_drempel in ("", 0, 0.0) else round(float(gezicht_drempel), 2)
+            if nieuw is not None and not 0.5 <= nieuw <= 0.95:
+                raise ToegangFout("strengheid gezicht is 0,50 tot 0,95")
+            if nieuw != d.get("gezicht_drempel"):
+                d["gezicht_drempel"] = nieuw
+                detail.append(f"strengheid gezicht {nieuw:.2f}" if nieuw is not None else "strengheid gezicht door de tablet")
         if gezicht_live is not None and bool(gezicht_live) != bool(d.get("gezicht_live")):
             d["gezicht_live"] = bool(gezicht_live)
             detail.append("gezichtsserver mag openen" if gezicht_live else "gezichtsserver enkel proef")
@@ -663,10 +677,25 @@ class Register:
                 "gezicht": self._gezicht_voor(p, kid),
             })
         personen.sort(key=lambda x: x["naam"].lower())
-        return {"schema": 1, "versie": self.versie, "gemaakt": _iso(_nu()),
+        app = self.data.get("app") if (tablet or {}).get("soort", "tablet") != "server" else None
+        return {"schema": 2, "versie": self.versie, "gemaakt": _iso(_nu()),
                 "deur": {**{k: d[k] for k in ("id", "naam", "modus", "modus_sinds", "modus_door")},
-                         "klavier_tot": d.get("klavier_tot") if (d.get("klavier_tot") or "") > _iso(_nu()) else None},
-                "hash": {"algoritme": "sha256-iter", "rondes": 2000}, "gezicht_kdf": None, "personen": personen}
+                         "klavier_tot": d.get("klavier_tot") if (d.get("klavier_tot") or "") > _iso(_nu()) else None,
+                         "gezicht_drempel": d.get("gezicht_drempel")},
+                "hash": {"algoritme": "sha256-iter", "rondes": 2000}, "personen": personen,
+                "app": {k: app[k] for k in ("version_code", "versie", "sha256", "grootte")} if app else None}
+
+    # ------------------------------------------------------------------ app update voor de tablets (schema 2)
+
+    def apk_zetten(self, version_code: int, versie: str, sha256: str, grootte: int, bestand: str, wie: str = "") -> dict:
+        oud = self.data.get("app") or {}
+        if oud.get("version_code") and version_code < oud["version_code"]:
+            raise ToegangFout(f"versie {version_code} is ouder dan {oud['version_code']}")
+        self.data["app"] = {"version_code": int(version_code), "versie": str(versie)[:20], "sha256": sha256.lower(),
+                            "grootte": int(grootte), "bestand": bestand, "sinds": _iso(_nu())}
+        self.audit(wie, "app update klaargezet", f"Btechnics Deur {versie} ({version_code})", soort="tablet")
+        self.gewijzigd()
+        return self.data["app"]
 
     @staticmethod
     def _gezicht_voor(p: dict, kid: str | None) -> dict | bool:
