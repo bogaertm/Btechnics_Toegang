@@ -355,6 +355,82 @@ class Akuvox:
             self.reg._bewaar()  # noqa: SLF001
         return rijen
 
+    async def schemas(self) -> list[dict]:
+        """Alle schema's op het toestel (pagina per pagina)."""
+        uit: dict[str, dict] = {}
+        for pagina in range(1, 21):
+            j = await self._vraag("GET", f"/api/schedule/get?page={pagina}")
+            items = [x for x in ((j.get("data") or {}).get("item") or []) if isinstance(x, dict)]
+            nieuw = [x for x in items if str(x.get("ID") or x.get("DisplayID")) not in uit]
+            for x in nieuw:
+                uit[str(x.get("ID") or x.get("DisplayID"))] = x
+            if not nieuw:
+                break
+        return list(uit.values())
+
+    async def async_schema_proef(self) -> dict:
+        """v0.14.3 proef: welk schemaformaat aanvaardt dit toestel? Zet tijdelijke schema's met naam 'BTX proef',
+        leest ze terug, koppelt er een tijdelijke eigen gebruiker 799990 aan, leest die terug en ruimt alles weer op.
+        Raakt niets anders aan: wissen enkel op ID van items met die naam."""
+        PROEF = "BTX proef"
+        dagen = {"Mon": "1", "Tue": "1", "Wed": "1", "Fri": "1", "Sat": "0", "Sun": "0"}
+        varianten = {
+            "A": {"Name": PROEF + " A", "Type": "0", **dagen, "Thur": "1", "DateStart": "20261102", "DateEnd": "20261231",
+                  "TimeStart": "08:00", "TimeEnd": "17:00"},
+            "B": {"Name": PROEF + " B", "Type": "1", **dagen, "Thu": "1", "Thur": "1", "DateStart": "2026-11-02", "DateEnd": "2026-12-31",
+                  "TimeStart": "08:00:00", "TimeEnd": "17:00:00"},
+        }
+        verslag: dict[str, Any] = {"voor": [], "varianten": {}, "gebruiker": None, "na": []}
+
+        async def opruimen() -> list:
+            weg = [x for x in await self.schemas() if str(x.get("Name", "")).startswith(PROEF)]
+            for x in weg:
+                try:
+                    await self._vraag("POST", "/api/schedule/del", {"target": "schedule", "action": "del", "data": {"item": [{"ID": str(x.get("ID"))}]}})
+                except AkuvoxFout as e:
+                    verslag.setdefault("opruimfouten", []).append(str(e)[:200])
+            return weg
+
+        verslag["voor"] = await self.schemas()
+        await opruimen()
+        try:
+            for naam, item in varianten.items():
+                r: dict[str, Any] = {"verstuurd": item}
+                try:
+                    r["antwoord"] = await self._vraag("POST", "/api/schedule/add", {"target": "schedule", "action": "add", "data": {"item": [item]}})
+                except AkuvoxFout as e:
+                    r["fout"] = str(e)[:300]
+                r["teruggelezen"] = [x for x in await self.schemas() if x.get("Name") == item["Name"]]
+                verslag["varianten"][naam] = r
+            # tijdelijke eigen gebruiker aan het eerste gelukte schema koppelen (code willekeurig, meteen weer weg)
+            gelukt = next((v["teruggelezen"][0] for v in verslag["varianten"].values() if v["teruggelezen"]), None)
+            if gelukt:
+                sid = str(gelukt.get("DisplayID") or gelukt.get("ID"))
+                bestaand = [u for u in await self.gebruikers() if str(u.get("UserID")) == "799990"]
+                if not bestaand:
+                    import secrets
+                    gb = {"Name": PROEF, "UserID": "799990", "PrivatePIN": str(secrets.randbelow(9 * 10 ** 7) + 10 ** 7),
+                          "Schedule-Relay": f"{sid}-1;", "ScheduleRelay": f"{sid}-1;", "RelayScheduleActivationPermission": "1",
+                          "Group": "Default", "WebRelay": "0", "LiftFloorNum": "0"}
+                    g: dict[str, Any] = {"schema": sid}
+                    try:
+                        g["antwoord"] = await self._vraag("POST", "/api/user/add", {"target": "user", "action": "add", "data": {"item": [gb]}})
+                    except AkuvoxFout as e:
+                        g["fout"] = str(e)[:300]
+                    terug = [u for u in await self.gebruikers() if str(u.get("UserID")) == "799990"]
+                    g["teruggelezen"] = [{k: v for k, v in u.items() if k not in ("PrivatePIN", "CardCode", "BLE_AuthCode", "PhoneNum", "QrCodeUrl")} for u in terug]
+                    for u in terug:
+                        if u.get("Name") == PROEF:
+                            await self._vraag("POST", "/api/user/del", {"target": "user", "action": "del", "data": {"item": [{"ID": str(u.get("ID"))}]}})
+                    g["weg"] = not [u for u in await self.gebruikers() if str(u.get("UserID")) == "799990"]
+                    verslag["gebruiker"] = g
+                else:
+                    verslag["gebruiker"] = "UserID 799990 bestaat al, niet aangeraakt"
+        finally:
+            verslag["opgeruimd"] = len(await opruimen())
+            verslag["na"] = await self.schemas()
+        return verslag
+
     async def async_test(self) -> dict:
         """Enkel lezen: wat ziet HA op het toestel (voor de instellingen en de diagnose)."""
         lijst = await self.gebruikers()

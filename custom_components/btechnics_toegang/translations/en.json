@@ -403,6 +403,16 @@
           "description": "New name"
         }
       }
+    },
+    "akuvox_schema_proef": {
+      "name": "Akuvox schedule probe",
+      "description": "Temporarily adds a test schedule and test user 799990 on the S532, reads them back and removes them.",
+      "fields": {
+        "toestel": {
+          "name": "Device",
+          "description": "1 or 2"
+        }
+      }
     }
   },
   "options": {

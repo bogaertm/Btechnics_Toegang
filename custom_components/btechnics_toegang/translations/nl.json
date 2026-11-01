@@ -403,6 +403,16 @@
           "description": "Nieuwe naam"
         }
       }
+    },
+    "akuvox_schema_proef": {
+      "name": "Akuvox schemaproef",
+      "description": "Zet tijdelijk een proefschema en een proefgebruiker 799990 op de S532, leest ze terug en wist ze weer.",
+      "fields": {
+        "toestel": {
+          "name": "Toestel",
+          "description": "1 of 2"
+        }
+      }
     }
   },
   "options": {

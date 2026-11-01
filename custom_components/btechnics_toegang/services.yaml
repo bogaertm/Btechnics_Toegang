@@ -231,6 +231,14 @@ akuvox_test:
         number:
           min: 1
           max: 2
+akuvox_schema_proef:
+  fields:
+    toestel:
+      required: false
+      selector:
+        number:
+          min: 1
+          max: 2
 testdeur_klaarzetten: {}
 testdeur_opruimen: {}
 akuvox_sync:

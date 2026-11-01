@@ -25,6 +25,8 @@ class NepAkuvox:
                             "ScheduleRelay": "1001-12;", "RelayScheduleActivationPermission": "12", "Group": "Default"}}
         self.n = 2
         self.log = []
+        self.schemas = {"1": {"ID": "1", "DisplayID": "1001", "Name": "Always", "Daily": "00:00:00-23:59:59"},
+                        "2": {"ID": "2", "DisplayID": "1002", "Name": "Never"}}
         self.schema_negeren = schema_negeren   # toestel dat het schema niet overneemt (zoals de fout van 18/10)
 
     def _neem(self, doel, it):
@@ -38,6 +40,10 @@ class NepAkuvox:
         doel.setdefault("Group", "")
 
     async def get(self, method, url, data):
+        if url.path == "/api/schedule/get":
+            pagina = int(url.query.get("page", "1"))
+            stuk = list(self.schemas.values())[(pagina - 1) * 2:pagina * 2]
+            return AiohttpClientMockResponse(method, url, json={"retcode": 0, "data": {"num": len(stuk), "item": stuk}})
         if url.path == "/api/user/get":
             pagina = int(url.query.get("page", "1"))
             alles = list(self.users.values())
@@ -47,6 +53,15 @@ class NepAkuvox:
 
     async def post(self, method, url, data):
         actie = url.path.rsplit("/", 1)[1]
+        if url.path.startswith("/api/schedule/"):
+            for it in data["data"]["item"]:
+                if actie == "add":
+                    self.n += 1
+                    self.schemas[str(self.n)] = {"ID": str(self.n), "DisplayID": str(1000 + self.n), "Name": it["Name"],
+                                                 "Mon": it.get("Mon", "0"), "TimeStart": it.get("TimeStart", "")}
+                elif actie == "del":
+                    del self.schemas[it["ID"]]
+            return AiohttpClientMockResponse(method, url, json={"retcode": 0, "message": "OK"})
         for it in data["data"]["item"]:
             if actie == "add":
                 self.n += 1
@@ -166,3 +181,27 @@ async def test_akuvox_sync(hass, aioclient_mock, hass_client_no_auth, hass_ws_cl
     assert d["devices"]["totaal"] == 1 and d["devices"]["namen"] == ["S532"] and d["devices"]["online"] in (0, 1)
     b = [x for x in r["result"]["doors"] if x["name"] == "Binnen"][0]
     assert b["devices"] is None
+
+
+async def test_akuvox_schema_proef(hass, aioclient_mock):
+    """v0.14.3: de proef zet schema's en gebruiker 799990 tijdelijk, leest terug en laat het toestel achter zoals ervoor."""
+    nep = NepAkuvox()
+    aioclient_mock.get(f"https://{IP}/api/user/get", side_effect=nep.get)
+    aioclient_mock.get(f"https://{IP}/api/schedule/get", side_effect=nep.get)
+    for a in ("add", "set", "del"):
+        aioclient_mock.post(f"https://{IP}/api/user/{a}", side_effect=nep.post)
+        aioclient_mock.post(f"https://{IP}/api/schedule/{a}", side_effect=nep.post)
+    entry = MockConfigEntry(domain=DOMAIN, data={})
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    deur = hass.data[DOMAIN]["register"].deur_toevoegen("Voordeur", wie="test")
+    hass.config_entries.async_update_entry(entry, options={"akuvox_aan": True, "akuvox_ip": IP, "akuvox_gebruiker": "api",
+                                                           "akuvox_wachtwoord": "geheim", "akuvox_deur": deur["id"]})
+    await hass.async_block_till_done()
+    users_voor = {k: dict(v) for k, v in nep.users.items()}
+    r = await hass.services.async_call(DOMAIN, "akuvox_schema_proef", {}, blocking=True, return_response=True)
+    assert r["varianten"]["A"]["teruggelezen"] and r["varianten"]["B"]["teruggelezen"]
+    g = r["gebruiker"]
+    assert g["teruggelezen"][0]["ScheduleRelay"] == g["schema"] + "-1;" and "PrivatePIN" not in g["teruggelezen"][0] and g["weg"]
+    assert r["opgeruimd"] == 2 and sorted(nep.schemas) == ["1", "2"] and nep.users == users_voor
