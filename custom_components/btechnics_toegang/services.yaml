@@ -241,6 +241,10 @@ akuvox_schema_proef:
       required: false
       selector:
         boolean:
+    volgorde:
+      required: false
+      selector:
+        boolean:
     toestel:
       required: false
       selector:

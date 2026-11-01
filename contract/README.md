@@ -72,10 +72,13 @@ Tablet app v1.72 aanvaardt schema 1 en 2. Eerst de app bijwerken, dan HA.
 Uren en einddatum van een persoon staan als eigen schema's op de S532, zodat ze ook gelden als HA uitvalt.
 Formaat in `akuvox_s532.json` (schema_formaat). Regels:
 
-- Eigen schema's heten `BTX <UserID>-<n>`, staan in de HA opslag (akuvox.schemas) en worden enkel op dat ID en die naam gewijzigd of gewist. SmartPlus (Source Cloud), Always en Never blijven onaangeroerd.
+- Eigen schema's heten `BTX <UserID of laatste 6 tekens van het persoon-ID>-<n>`, staan in de HA opslag (akuvox.schemas) en worden enkel op dat ID en die naam gewijzigd of gewist. SmartPlus (Source Cloud), Always en Never blijven onaangeroerd.
 - Zonder uren en zonder datums: `1001-1;` (Always), zoals voorheen.
 - Met uren: Type 1 (Week + Daily). Met datums: Type 0 met Date. Over middernacht: twee schema's (tot 23:59 en vanaf 00:00 de dag erna).
 - Einddatum per dag op het toestel; HA zet de persoon nog altijd op het exacte uur uit dienst.
 - Eerst schema's zetten en terug lezen, dan de gebruiker (ScheduleRelay), pas daarna ongebruikte eigen schema's wissen.
-- Staat een schema niet goed op het toestel, dan valt HA veilig terug op de oude regel (persoon enkel binnen de uren op het toestel).
+- Staat een schema niet goed op het toestel: wie al op werkende eigen schema's stond, blijft onaangeroerd; wie nog geen werkend schema heeft, krijgt Always (1001) enkel binnen de uren en Never (1002) erbuiten, door HA bewaakt. Nooit 'altijd' buiten de uren door een fout. (v0.15.1)
+- Eigen schema's worden nooit gewist zolang een gebruiker op het toestel ernaar verwijst; na een wissing volgt een tweede ronde die alle verwijzingen opnieuw zet en terug leest (voor als het toestel DisplayID's verschuift). (v0.15.1)
+- Einduur exact ook zonder HA: eindigt de geldigheid niet om 23:59, dan loopt het bereik tot de dag ervoor en krijgt de laatste dag eigen stukken tot het einduur. (v0.15.1)
+- Laat het toestel iemand binnen die volgens HA geen toegang heeft, dan volgt een melding (v0.15.1).
 - Een weigering in het deurlog buiten de uren of datums is terecht: geen alarm, in de historiek "(buiten de uren)".

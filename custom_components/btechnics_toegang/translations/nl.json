@@ -419,6 +419,10 @@
         "gebruiker": {
           "name": "Proefgebruiker",
           "description": "Tijdelijke gebruiker 799990 aan het eerste schema koppelen"
+        },
+        "volgorde": {
+          "name": "Volgorde meten",
+          "description": "DisplayID's bij wissen en toevoegen, en schedule/set meten"
         }
       }
     }

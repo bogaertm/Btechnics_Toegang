@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import re
 from datetime import datetime
 from typing import Any
 
@@ -28,6 +29,7 @@ from .register import Register
 _LOGGER = logging.getLogger(__name__)
 TIMEOUT = aiohttp.ClientTimeout(total=15)
 SCHEDULE_ALTIJD = "1001"   # standaardschema "altijd" op Akuvox
+SCHEDULE_NOOIT = "1002"    # standaardschema "nooit" op Akuvox
 METHODE = {"privatepin": "pin", "pin": "pin", "publicpin": "pin", "card": "kaart", "rf card": "kaart", "face": "gezicht",
            "remote": "ha", "http": "ha", "button": "knop", "exit button": "knop", "call": "oproep"}
 
@@ -88,6 +90,8 @@ class Akuvox:
                 j = await r.json(content_type=None)
         except (aiohttp.ClientError, asyncio.TimeoutError) as e:
             raise AkuvoxFout(f"toestel niet bereikbaar ({type(e).__name__})") from e
+        except ValueError as e:
+            raise AkuvoxFout(f"onleesbaar antwoord op {pad}") from e
         if not isinstance(j, dict) or str(j.get("retcode", "0")) not in ("0", "1"):
             raise AkuvoxFout(f"toestel weigert {pad}: {str(j)[:200]}")
         return j
@@ -120,8 +124,10 @@ class Akuvox:
             if p["status"] != "active" or self.deur_id not in p["deuren"] or not p.get("pin"):
                 continue
             # v0.15.0: uren en datums gaan als schema mee naar het toestel; de persoon blijft erop staan (ook buiten de uren)
-            uit[p["id"]] = {"naam": p["naam"][:63], "pin": p["pin"], "schemas": self.schema_items(p), "relay": f"{SCHEDULE_ALTIJD}-1;",
-                            "_p": p}
+            items = self.schema_items(p)
+            datums = bool(p.get("valid_from") or p.get("valid_until"))
+            relay = f"{SCHEDULE_NOOIT}-1;" if datums and not items else f"{SCHEDULE_ALTIJD}-1;"
+            uit[p["id"]] = {"naam": p["naam"][:63], "pin": p["pin"], "schemas": items, "relay": relay, "_p": p}
         return uit
 
     @staticmethod
@@ -160,22 +166,56 @@ class Akuvox:
     # Daily "HH:MM-HH:MM". Een gebruiker verwijst ernaar met ScheduleRelay "<DisplayID>-1;".
     SCHEMA_PREFIX = "BTX "
 
+    @classmethod
+    def _buiten(cls, p: dict, t: datetime) -> bool:
+        """Volgens HA buiten de uren of datums van deze persoon op tijdstip t."""
+        def dag(iso):
+            d = cls._lokaal(iso)
+            return d.date().isoformat() if d else None
+        vu = cls._lokaal(p.get("valid_until"))
+        if vu is not None and dt_util.as_local(t) >= vu:
+            return True
+        return bool(reden_geweigerd({"schema": p.get("schema") or [], "van": dag(p.get("valid_from")), "tot": dag(p.get("valid_until"))},
+                                    dt_util.as_local(t)))
+
     @staticmethod
-    def _datum(iso: str | None) -> str:
-        if not iso:
-            return "00000000"
-        t = dt_util.parse_datetime(iso)
-        if t is None:
-            return "00000000"
-        return dt_util.as_local(t).strftime("%Y%m%d")
+    def _lokaal(iso: str | None):
+        t = dt_util.parse_datetime(iso) if iso else None
+        return dt_util.as_local(t) if t else None
 
     @classmethod
     def schema_items(cls, p: dict) -> list[dict]:
-        """Gewenste S532 schema's voor een persoon, zonder naam/ID. Leeg = altijd (1001)."""
+        """Gewenste S532 schema's voor een persoon, zonder naam/ID. Leeg = altijd (1001).
+        Datums: het toestel kent enkel dagen; eindigt valid_until niet op 23:59, dan loopt het gewone bereik tot de dag
+        ervoor en krijgt de laatste dag eigen stukken die stoppen op het einduur (ook bij uitval van HA exact)."""
         blokken = p.get("schema") or []
         datums = bool(p.get("valid_from") or p.get("valid_until"))
         if not blokken and not datums:
             return []
+        stukken = cls._stukken(blokken)
+        if not datums:
+            return [{"Type": "1", "Week": w, "Daily": f"{v}-{t}"} for w, v, t in stukken]
+        van_d = cls._lokaal(p.get("valid_from"))
+        tot_t = cls._lokaal(p.get("valid_until"))
+        begin = van_d.strftime("%Y%m%d") if van_d else "00000000"
+        uit = []
+        if tot_t is None or tot_t.strftime("%H:%M") >= "23:59":
+            einde = tot_t.strftime("%Y%m%d") if tot_t else "00000000"
+            return [{"Type": "0", "Week": w, "Daily": f"{v}-{t}", "Date": f"{begin}-{einde}"} for w, v, t in stukken]
+        from datetime import timedelta
+        laatste = tot_t.date()
+        dag_ervoor = laatste - timedelta(days=1)
+        if van_d is None or van_d.date() <= dag_ervoor:
+            uit += [{"Type": "0", "Week": w, "Daily": f"{v}-{t}", "Date": f"{begin}-{dag_ervoor:%Y%m%d}"} for w, v, t in stukken]
+        if van_d is None or van_d.date() <= laatste:
+            wd, eind = str(laatste.isoweekday() % 7), tot_t.strftime("%H:%M")
+            for w, v, t in stukken:
+                if wd in w and v < eind:
+                    uit.append({"Type": "0", "Week": wd, "Daily": f"{v}-{min(t, eind)}", "Date": f"{laatste:%Y%m%d}-{laatste:%Y%m%d}"})
+        return uit   # leeg = niets meer over (einduur 00:00 of voor elk blok): _gewenst zet dan Never (1002)
+
+    @staticmethod
+    def _stukken(blokken: list[dict]) -> list[tuple[str, str, str]]:
         stukken: list[tuple[str, str, str]] = []   # (week, van, tot)
         for b in blokken or [{"dagen": [1, 2, 3, 4, 5, 6, 7], "van": "00:00", "tot": "23:59"}]:
             dagen = sorted({d % 7 for d in b["dagen"]})
@@ -186,13 +226,7 @@ class Akuvox:
                 stukken.append(("".join(map(str, dagen)), b["van"], "23:59"))
                 if b["tot"] != "00:00":
                     stukken.append(("".join(map(str, sorted({(d + 1) % 7 for d in dagen}))), "00:00", b["tot"]))
-        uit = []
-        for week, van, tot in stukken:
-            it = {"Type": "0" if datums else "1", "Week": week, "Daily": f"{van}-{tot}"}
-            if datums:
-                it["Date"] = f"{cls._datum(p.get('valid_from'))}-{cls._datum(p.get('valid_until'))}"
-            uit.append(it)
-        return uit
+        return stukken
 
     @staticmethod
     def schema_gelijk(dev: dict, w: dict) -> bool:
@@ -265,167 +299,215 @@ class Akuvox:
                     ids = None
                     break
                 ids.append(str(dev["DisplayID"]))
+                info["DisplayID"] = str(dev["DisplayID"])
             if ids:
                 relay[pid] = "".join(f"{i}-1;" for i in ids)
         weg = [str(info["id"]) for k, info in eigen.items() if k not in nodig]
         return relay, weg
 
-    async def _schemas_opruimen(self, weg: list[str], verslag: dict) -> None:
-        """Eigen schema's die niemand meer nodig heeft wissen. Enkel op ID uit onze eigen administratie, met naamcontrole."""
-        if not weg:
-            return
+    async def _schemas_opruimen(self, weg: list[str], gebruikers: list[dict] | None, verslag: dict) -> int:
+        """Eigen schema's die niemand meer nodig heeft wissen. Enkel op ID uit onze eigen administratie (of een wees met
+        onze naamvorm), met naamcontrole, en NOOIT zolang een gebruiker op het toestel er nog naar verwijst (anders kan
+        een vrijgekomen DisplayID later bij iemand anders terechtkomen). Geeft het aantal gewiste schema's."""
         eigen: dict = self._staat.setdefault("schemas", {})
+        if gebruikers is None:
+            return 0   # gebruikers niet terug gelezen: niets wissen
+        if not weg and not eigen:
+            return 0   # geen eigen schema's in gebruik: toestel niet onnodig bevragen
         try:
-            op_toestel = {str(x.get("ID")): x for x in await self.schemas()}
+            schemas = await self.schemas()
         except AkuvoxFout as e:
             verslag["fouten"].append(f"schema's lezen: {e}")
-            return
-        for k, info in list(eigen.items()):
-            if str(info["id"]) not in weg:
-                continue
+            return 0
+        op_toestel = {str(x.get("ID")): x for x in schemas}
+        in_gebruik = {deel.split("-", 1)[0] for u in gebruikers
+                      for deel in str(u.get("ScheduleRelay") or u.get("Schedule-Relay") or "").split(";") if deel}
+        bekend = {str(i["id"]) for i in eigen.values()}
+        kandidaten = [(k, info) for k, info in eigen.items() if str(info["id"]) in weg]
+        # wezen: schema's met onze naamvorm die niet (meer) in de administratie staan (bv. herstart vlak na add)
+        kandidaten += [(None, {"id": str(x.get("ID")), "naam": str(x.get("Name"))}) for x in schemas
+                       if str(x.get("ID")) not in bekend and str(x.get("Source", "Local")) == "Local"
+                       and re.fullmatch(r"BTX [0-9a-z]+-\d+", str(x.get("Name") or ""))]
+        gewist = 0
+        for k, info in kandidaten:
             dev = op_toestel.get(str(info["id"]))
+            if dev is not None and str(dev.get("DisplayID")) in in_gebruik:
+                continue   # nog in gebruik: laten staan, volgende sync opnieuw
             try:
                 if dev is not None and str(dev.get("Name")) == info["naam"] and str(dev.get("Name")).startswith(self.SCHEMA_PREFIX):
                     await self._vraag("POST", "/api/schedule/del", {"target": "schedule", "action": "del", "data": {"item": [{"ID": str(info["id"])}]}})
-                del eigen[k]
+                    gewist += 1
+                if k is not None:
+                    del eigen[k]
             except AkuvoxFout as e:
                 verslag["fouten"].append(f"schema {info['naam']} wissen: {e}")
+        return gewist
 
     # ------------------------------------------------------------------ sync
 
     async def async_sync(self) -> dict:
         """Brengt het toestel in lijn en CONTROLEERT daarna op het toestel zelf of alles echt staat zoals nodig.
-        Status ok is enkel waar als die controle slaagt. Verslag: toegevoegd, gewijzigd, gewist, fouten."""
+        Status ok is enkel waar als die controle slaagt. Verslag: toegevoegd, gewijzigd, gewist, fouten.
+        Na het wissen van schema's volgt een tweede ronde: verschuift het toestel DisplayID's, dan zet die alles recht."""
         if not self.aan:
             return {"aan": False}
         async with self._lock:
-            verslag = {"toegevoegd": [], "gewijzigd": [], "gewist": [], "fouten": []}
+            verslag = await self._sync_ronde()
+            if verslag.pop("_opnieuw", False):
+                tweede = await self._sync_ronde()
+                tweede.pop("_opnieuw", None)
+                for k in ("toegevoegd", "gewijzigd", "gewist"):
+                    verslag[k] += [x for x in tweede.get(k, []) if x not in verslag[k]]
+                verslag["fouten"] = tweede.get("fouten", [])
+            return verslag
+
+    async def _sync_ronde(self) -> dict:
+        verslag: dict[str, Any] = {"toegevoegd": [], "gewijzigd": [], "gewist": [], "fouten": []}
+        try:
+            lijst = await self.gebruikers()
+        except AkuvoxFout as e:
+            self.status.update(ok=False, fout=str(e), laatst=dt_util.utcnow().isoformat())
+            return {"fout": str(e), "fouten": [str(e)], "toegevoegd": [], "gewijzigd": [], "gewist": []}
+        staat = self._staat
+        eigen = staat["gebruikers"]
+        per_userid = {str(x.get("UserID")): x for x in lijst}
+        self.status["velden"] = sorted({k for x in lijst for k in x})[:40]
+        gewenst = self._gewenst(dt_util.now())
+        geschreven = False
+
+        # koppelingen die niet (meer) naar onze gebruiker wijzen loslaten: nooit een vreemde wissen of overschrijven
+        for pid, info in list(eigen.items()):
+            dev = per_userid.get(str(info.get("userid")))
+            if dev is not None and not self._is_van_ons(dev, info):
+                _LOGGER.warning("Akuvox %s: UserID %s is niet (meer) van %s, koppeling losgelaten", self.nr, info["userid"],
+                                info.get("naam", pid))
+                del eigen[pid]
+            elif dev is not None:
+                info["dev_id"] = str(dev.get("ID"))
+
+        van_ons = {str(i["userid"]) for i in eigen.values()}
+        vreemd = [x for x in lijst if str(x.get("UserID")) not in van_ons]
+        vreemde_pins = {self._pin_h(str(x["PrivatePIN"])) for x in vreemd
+                        if x.get("PrivatePIN") not in (None, "") and "*" not in str(x.get("PrivatePIN"))}
+        staat["vreemde_pins"] = sorted(vreemde_pins)
+        self.reg.extern_pins[f"akuvox{self.nr}"] = vreemde_pins
+
+        # 1. weg: van ons, maar niet meer gewenst (EERST, voor er schema's bij komen)
+        for pid, info in list(eigen.items()):
+            if pid in gewenst:
+                continue
+            dev = per_userid.get(str(info["userid"]))
+            try:
+                if dev is not None and int(info["userid"]) >= USER_ID_START:
+                    await self._schrijf("del", [{"ID": str(dev.get("ID"))}])
+                    geschreven = True
+                    verslag["gewist"].append(info.get("naam", pid))
+                if pid not in self.reg.data["personen"]:
+                    del eigen[pid]
+            except AkuvoxFout as e:
+                verslag["fouten"].append(f"wissen {info.get('naam', pid)}: {e}")
+
+        # 2. schema's zetten en terug lezen. Lukt dat voor iemand niet, dan blijft die persoon op het toestel zoals hij
+        #    stond (nooit terug naar 'altijd') en wie er nog niet op staat, komt er niet bij.
+        relay, schema_weg = await self._schemas_zetten({k: v for k, v in gewenst.items() if v["schemas"]}, verslag)
+        onaangeroerd: set[str] = set()
+        eigen_ids = {str(i.get("DisplayID")) for i in staat.get("schemas", {}).values() if i.get("DisplayID")}
+        for pid, w in list(gewenst.items()):
+            if not w["schemas"]:
+                continue
+            if pid in relay:
+                w["relay"] = relay[pid]
+                continue
+            info = eigen.get(pid)
+            dev = per_userid.get(str(info["userid"])) if info else None
+            huidig = [x.split("-", 1)[0] for x in str((dev or {}).get("ScheduleRelay") or "").split(";") if x]
+            if huidig and all(x in eigen_ids for x in huidig):
+                # stond al op eigen schema's (die het toestel ook zonder HA bewaakt): niets aanraken tot het weer lukt
+                onaangeroerd.add(pid)
+                del gewenst[pid]
+            else:
+                # nog geen werkend schema: HA bewaakt de uren zelf, zoals voor v0.15 (binnen = altijd, buiten = nooit)
+                w["relay"] = f"{SCHEDULE_NOOIT}-1;" if self._buiten(w["_p"], dt_util.now()) else f"{SCHEDULE_ALTIJD}-1;"
+
+        # 3. bij of aanpassen, enkel waar het toestel afwijkt
+        for pid, w in gewenst.items():
+            info = eigen.get(pid)
+            velden = {"Name": w["naam"], "PrivatePIN": w["pin"],
+                      # het toestel toont ScheduleRelay maar aanvaardt bij add/set enkel Schedule-Relay
+                      "Schedule-Relay": w["relay"], "ScheduleRelay": w["relay"],
+                      "RelayScheduleActivationPermission": "1", "Group": "Default", "WebRelay": "0", "LiftFloorNum": "0"}
+            dev = per_userid.get(str(info["userid"])) if info else None
+            try:
+                if dev is not None:
+                    if self.afwijkingen(dev, w):
+                        await self._schrijf("set", [{"ID": str(dev.get("ID")), "UserID": str(info["userid"]), **velden}])
+                        info["naam"] = w["naam"]
+                        geschreven = True
+                        verslag["gewijzigd"].append(w["naam"])
+                    continue
+                if self._pin_h(w["pin"]) in vreemde_pins:
+                    verslag["fouten"].append(f"{w['naam']}: deze code staat al bij een andere gebruiker op het toestel (SmartPlus?)")
+                    continue
+                userid = self._nieuw_userid(per_userid)
+                await self._schrijf("add", [{"UserID": userid, **velden}])
+                eigen[pid] = {"userid": userid, "naam": w["naam"]}
+                geschreven = True
+                verslag["toegevoegd"].append(w["naam"])
+            except AkuvoxFout as e:
+                verslag["fouten"].append(f"{w['naam']}: {e}")
+
+        # 4. controle op het toestel zelf
+        terug: list[dict] | None = lijst
+        if geschreven:
             try:
                 lijst = await self.gebruikers()
+                terug = lijst
+                per_userid = {str(x.get("UserID")): x for x in lijst}
             except AkuvoxFout as e:
-                self.status.update(ok=False, fout=str(e), laatst=dt_util.utcnow().isoformat())
-                return {"fout": str(e)}
-            staat = self._staat
-            eigen = staat["gebruikers"]
-            per_userid = {str(x.get("UserID")): x for x in lijst}
-            self.status["velden"] = sorted({k for x in lijst for k in x})[:40]
-            gewenst = self._gewenst(dt_util.now())
-            geschreven = False
-            relay, schema_weg = await self._schemas_zetten({k: v for k, v in gewenst.items() if v["schemas"]}, verslag)
-            for pid, w in list(gewenst.items()):
-                if not w["schemas"]:
-                    continue
-                if pid in relay:
-                    w["relay"] = relay[pid]
-                elif reden_geweigerd({"schema": w["_p"].get("schema") or []}, dt_util.now()):
-                    # schema's niet goed op het toestel: veilig terugvallen op de oude regel (enkel binnen de uren, door HA)
-                    del gewenst[pid]
+                terug = None
+                verslag["fouten"].append(f"controle na schrijven: {e}")
+        in_orde = 0
+        for pid, w in gewenst.items():
+            info = eigen.get(pid)
+            dev = per_userid.get(str(info["userid"])) if info else None
+            if dev is None:
+                if info:
+                    verslag["fouten"].append(f"{w['naam']} staat niet op het toestel na het schrijven")
+                continue
+            info["dev_id"] = str(dev.get("ID"))
+            afw = self.afwijkingen(dev, w)
+            if afw:
+                verslag["fouten"].append(f"toestel nam {w['naam']} niet goed over: {', '.join(afw)}")
+            else:
+                in_orde += 1
+        for pid, info in eigen.items():
+            dev = per_userid.get(str(info["userid"]))
+            if pid not in gewenst and pid not in onaangeroerd and dev is not None and self._is_van_ons(dev, info):
+                verslag["fouten"].append(f"{info.get('naam', pid)} staat nog op het toestel maar heeft geen toegang meer")
 
-            # koppelingen die niet (meer) naar onze gebruiker wijzen loslaten: nooit een vreemde wissen of overschrijven
-            for pid, info in list(eigen.items()):
-                dev = per_userid.get(str(info.get("userid")))
-                if dev is not None and not self._is_van_ons(dev, info):
-                    _LOGGER.warning("Akuvox %s: UserID %s is niet (meer) van %s, koppeling losgelaten", self.nr, info["userid"],
-                                    info.get("naam", pid))
-                    del eigen[pid]
-                elif dev is not None:
-                    info["dev_id"] = str(dev.get("ID"))
+        # 5. pas nu eigen schema's wissen die niemand nodig heeft, nooit zolang een gebruiker er nog naar verwijst
+        if await self._schemas_opruimen(schema_weg, terug, verslag):
+            verslag["_opnieuw"] = True   # DisplayID's kunnen verschoven zijn: tweede ronde zet en controleert alles opnieuw
 
-            van_ons = {str(i["userid"]) for i in eigen.values()}
-            vreemd = [x for x in lijst if str(x.get("UserID")) not in van_ons]
-            vreemde_pins = {self._pin_h(str(x["PrivatePIN"])) for x in vreemd
-                            if x.get("PrivatePIN") not in (None, "") and "*" not in str(x.get("PrivatePIN"))}
-            staat["vreemde_pins"] = sorted(vreemde_pins)
-            self.reg.extern_pins[f"akuvox{self.nr}"] = vreemde_pins
-
-            # weg: van ons, maar niet meer gewenst
-            for pid, info in list(eigen.items()):
-                if pid in gewenst:
-                    continue
-                dev = per_userid.get(str(info["userid"]))
-                try:
-                    if dev is not None and int(info["userid"]) >= USER_ID_START:
-                        await self._schrijf("del", [{"ID": str(dev.get("ID"))}])
-                        geschreven = True
-                        verslag["gewist"].append(info.get("naam", pid))
-                    if pid not in self.reg.data["personen"]:
-                        del eigen[pid]
-                except AkuvoxFout as e:
-                    verslag["fouten"].append(f"wissen {info.get('naam', pid)}: {e}")
-
-            # bij of aanpassen, enkel waar het toestel afwijkt
-            for pid, w in gewenst.items():
-                info = eigen.get(pid)
-                velden = {"Name": w["naam"], "PrivatePIN": w["pin"],
-                          # het toestel toont ScheduleRelay maar aanvaardt bij add/set enkel Schedule-Relay
-                          "Schedule-Relay": w["relay"], "ScheduleRelay": w["relay"],
-                          "RelayScheduleActivationPermission": "1", "Group": "Default", "WebRelay": "0", "LiftFloorNum": "0"}
-                dev = per_userid.get(str(info["userid"])) if info else None
-                try:
-                    if dev is not None:
-                        if self.afwijkingen(dev, w):
-                            await self._schrijf("set", [{"ID": str(dev.get("ID")), "UserID": str(info["userid"]), **velden}])
-                            info["naam"] = w["naam"]
-                            geschreven = True
-                            verslag["gewijzigd"].append(w["naam"])
-                        continue
-                    if self._pin_h(w["pin"]) in vreemde_pins:
-                        verslag["fouten"].append(f"{w['naam']}: deze code staat al bij een andere gebruiker op het toestel (SmartPlus?)")
-                        continue
-                    userid = self._nieuw_userid(per_userid)
-                    await self._schrijf("add", [{"UserID": userid, **velden}])
-                    eigen[pid] = {"userid": userid, "naam": w["naam"]}
-                    geschreven = True
-                    verslag["toegevoegd"].append(w["naam"])
-                except AkuvoxFout as e:
-                    verslag["fouten"].append(f"{w['naam']}: {e}")
-
-            # controle op het toestel zelf
-            if geschreven:
-                try:
-                    lijst = await self.gebruikers()
-                    per_userid = {str(x.get("UserID")): x for x in lijst}
-                except AkuvoxFout as e:
-                    verslag["fouten"].append(f"controle na schrijven: {e}")
-            in_orde = 0
-            for pid, w in gewenst.items():
-                info = eigen.get(pid)
-                dev = per_userid.get(str(info["userid"])) if info else None
-                if dev is None:
-                    if info:
-                        verslag["fouten"].append(f"{w['naam']} staat niet op het toestel na het schrijven")
-                    continue
-                info["dev_id"] = str(dev.get("ID"))
-                afw = self.afwijkingen(dev, w)
-                if afw:
-                    verslag["fouten"].append(f"toestel nam {w['naam']} niet goed over: {', '.join(afw)}")
-                else:
-                    in_orde += 1
-            for pid, info in eigen.items():
-                dev = per_userid.get(str(info["userid"]))
-                if pid not in gewenst and dev is not None and self._is_van_ons(dev, info):
-                    verslag["fouten"].append(f"{info.get('naam', pid)} staat nog op het toestel maar heeft geen toegang meer")
-
-            # pas nu (gebruikers verwijzen er niet meer naar) eigen schema's wissen die niemand nodig heeft
-            await self._schemas_opruimen(schema_weg, verslag)
-            van_ons = {str(i["userid"]) for i in eigen.values()}
-            fout = "; ".join(verslag["fouten"])[:400] or None
-            self.status.update(ok=not verslag["fouten"], fout=fout, laatst=dt_util.utcnow().isoformat(), eigen=in_orde,
-                               schemas=len(self._staat.get("schemas", {})),
-                               gewenst=len(gewenst), toestel=len(lijst),
-                               vreemd_boven_start=sum(1 for u in per_userid if u.isdigit() and int(u) >= USER_ID_START
-                                                      and u not in van_ons))
-            self.reg._bewaar()  # noqa: SLF001  enkel opslag, de tabletlijst verandert hier niet
-            if fout and fout != staat.get("laatste_fout"):
-                from homeassistant.components import persistent_notification
-                persistent_notification.async_create(
-                    self.hass, f"De Akuvox ({self.ip}) staat niet zoals HA het wil: {fout}",
-                    title="Btechnics Toegang: Akuvox klopt niet", notification_id=f"btechnics_toegang_akuvox{self.nr}")
-                _LOGGER.error("Akuvox %s: %s", self.nr, fout)
+        van_ons = {str(i["userid"]) for i in eigen.values()}
+        fout = "; ".join(verslag["fouten"])[:400] or None
+        self.status.update(ok=not verslag["fouten"], fout=fout, laatst=dt_util.utcnow().isoformat(), eigen=in_orde,
+                           schemas=len(self._staat.get("schemas", {})),
+                           gewenst=len(gewenst), toestel=len(lijst),
+                           vreemd_boven_start=sum(1 for u in per_userid if u.isdigit() and int(u) >= USER_ID_START
+                                                  and u not in van_ons))
+        self.reg._bewaar()  # noqa: SLF001  enkel opslag, de tabletlijst verandert hier niet
+        if fout and fout != staat.get("laatste_fout") and not verslag.get("_opnieuw"):
+            from homeassistant.components import persistent_notification
+            persistent_notification.async_create(
+                self.hass, f"De Akuvox ({self.ip}) staat niet zoals HA het wil: {fout}",
+                title="Btechnics Toegang: Akuvox klopt niet", notification_id=f"btechnics_toegang_akuvox{self.nr}")
+            _LOGGER.error("Akuvox %s: %s", self.nr, fout)
+        if not verslag.get("_opnieuw"):
             staat["laatste_fout"] = fout
-            if any(verslag[k] for k in ("toegevoegd", "gewijzigd", "gewist")):
-                _LOGGER.info("Akuvox: %s", {k: v for k, v in verslag.items() if v})
-            return verslag
+        if any(verslag[k] for k in ("toegevoegd", "gewijzigd", "gewist")):
+            _LOGGER.info("Akuvox: %s", {k: v for k, v in verslag.items() if v and not k.startswith("_")})
+        return verslag
 
     def _nieuw_userid(self, per_userid: dict) -> str:
         staat = self._staat
@@ -483,12 +565,20 @@ class Akuvox:
             pid = per_userid.get(str(x.get("UserID") or ""))
             naam = self.reg.data["personen"].get(pid, {}).get("naam") if pid else None
             p = self.reg.data["personen"].get(pid, {}) if pid else {}
-
-            def _dag(iso):
-                d = dt_util.parse_datetime(iso) if iso else None
-                return dt_util.as_local(d).date().isoformat() if d else None
-            buiten = bool(p) and bool(reden_geweigerd({"schema": p.get("schema") or [], "van": _dag(p.get("valid_from")),
-                                                       "tot": _dag(p.get("valid_until"))}, dt_util.as_local(t)))
+            buiten = bool(p) and self._buiten(p, t)
+            if pid and gelukt and laatste and (not p or p.get("status") != "active" or self.deur_id not in p.get("deuren", []) or buiten):
+                # het toestel liet iemand binnen die volgens HA geen toegang had: altijd melden
+                from homeassistant.components import persistent_notification
+                waarom = ("niet meer gekend" if not p else "niet actief" if p.get("status") != "active"
+                          else "geen recht op deze deur" if self.deur_id not in p.get("deuren", []) else "buiten de uren of datums")
+                melding = f"De Akuvox liet {naam or pid} binnen om {tijd}, terwijl die volgens HA geen toegang had ({waarom}). HA zet het toestel opnieuw recht."
+                persistent_notification.async_create(self.hass, melding, title="Btechnics Toegang: Akuvox liet iemand binnen",
+                                                     notification_id=f"btechnics_toegang_akuvox{self.nr}_binnen")
+                _LOGGER.error("Akuvox %s: %s", self.nr, melding)
+                self.status.update(ok=False, fout=f"toestel liet {naam or pid} binnen om {tijd} zonder recht")
+                for info in staat["gebruikers"].values():
+                    if str(info.get("userid")) == str(x.get("UserID")):
+                        info["dev_id"] = None
             if pid and not gelukt and laatste and buiten:
                 pass   # buiten de uren of datums: het toestel weigert terecht (schema op de S532)
             elif pid and not gelukt and laatste:
@@ -594,6 +684,43 @@ class Akuvox:
             verslag["opgeruimd"] = len(await opruimen())
             verslag["na"] = await self.schemas()
         return verslag
+
+    async def async_schema_volgorde(self) -> dict:
+        """v0.15.1 meting: wat doet de S532 met DisplayID's bij wissen en toevoegen, en werkt schedule/set?
+        Zet 'BTX proef A/B/C', wijzigt B, wist A, zet D, leest telkens terug en ruimt alles weer op."""
+        P = "BTX proef "
+        def eigen(lijst):
+            return {x["Name"]: {k: x.get(k) for k in ("ID", "DisplayID", "Type", "Week", "Daily", "Date")}
+                    for x in lijst if str(x.get("Name", "")).startswith(P)}
+        async def add(n):
+            j = await self._vraag("POST", "/api/schedule/add", {"target": "schedule", "action": "add",
+                                                                 "data": {"item": [{"Name": P + n, "Type": "1", "Week": "12345", "Daily": "08:00-09:00"}]}})
+            return ((j.get("data") or {}).get("item") or [{}])[0]
+        stappen: dict[str, Any] = {}
+        try:
+            for x in [x for x in await self.schemas() if str(x.get("Name", "")).startswith(P)]:
+                await self._vraag("POST", "/api/schedule/del", {"target": "schedule", "action": "del", "data": {"item": [{"ID": str(x.get("ID"))}]}})
+            for n in ("A", "B", "C"):
+                await add(n)
+            stappen["1_na_A_B_C"] = eigen(await self.schemas())
+            b = stappen["1_na_A_B_C"].get(P + "B") or {}
+            try:
+                stappen["2_set_antwoord"] = await self._vraag("POST", "/api/schedule/set", {"target": "schedule", "action": "set", "data": {"item": [
+                    {"ID": str(b.get("ID")), "DisplayID": str(b.get("DisplayID")), "Name": P + "B", "Type": "1", "Week": "06", "Daily": "10:00-11:00"}]}})
+            except AkuvoxFout as e:
+                stappen["2_set_antwoord"] = str(e)
+            stappen["2_na_set_B"] = eigen(await self.schemas())
+            a = stappen["1_na_A_B_C"].get(P + "A") or {}
+            await self._vraag("POST", "/api/schedule/del", {"target": "schedule", "action": "del", "data": {"item": [{"ID": str(a.get("ID"))}]}})
+            stappen["3_na_wissen_A"] = eigen(await self.schemas())
+            await add("D")
+            stappen["4_na_D"] = eigen(await self.schemas())
+        finally:
+            weg = [x for x in await self.schemas() if str(x.get("Name", "")).startswith(P)]
+            for x in weg:
+                await self._vraag("POST", "/api/schedule/del", {"target": "schedule", "action": "del", "data": {"item": [{"ID": str(x.get("ID"))}]}})
+            stappen["5_opgeruimd"] = not eigen(await self.schemas())
+        return stappen
 
     async def async_test(self) -> dict:
         """Enkel lezen: wat ziet HA op het toestel (voor de instellingen en de diagnose)."""

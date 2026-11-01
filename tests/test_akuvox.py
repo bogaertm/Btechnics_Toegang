@@ -29,6 +29,9 @@ class NepAkuvox:
                         "2": {"ID": "2", "DisplayID": "1002", "Name": "Never"}}
         self.schema_negeren = schema_negeren   # toestel dat het schema niet overneemt (zoals de fout van 18/10)
         self.schema_weigeren = False           # toestel dat geen nieuwe schema's aanneemt
+        self.schema_get_fout = False           # /api/schedule/get geeft HTTP 500
+        self.user_del_fout = False             # /api/user/del geeft HTTP 500
+        self.herschik = False                  # toestel nummert DisplayID's opnieuw na een wissing (1, 2, 3 ...)
 
     def _neem(self, doel, it):
         for k in self.VELDEN:
@@ -42,6 +45,8 @@ class NepAkuvox:
 
     async def get(self, method, url, data):
         if url.path == "/api/schedule/get":
+            if self.schema_get_fout:
+                return AiohttpClientMockResponse(method, url, status=500)
             pagina = int(url.query.get("page", "1"))
             stuk = list(self.schemas.values())[(pagina - 1) * 2:pagina * 2]
             return AiohttpClientMockResponse(method, url, json={"retcode": 0, "data": {"num": len(stuk), "item": stuk}})
@@ -54,6 +59,8 @@ class NepAkuvox:
 
     async def post(self, method, url, data):
         actie = url.path.rsplit("/", 1)[1]
+        if url.path == "/api/user/del" and self.user_del_fout:
+            return AiohttpClientMockResponse(method, url, status=500)
         if url.path.startswith("/api/schedule/"):
             for it in data["data"]["item"]:
                 # zoals de echte S532 (01/11): bewaart Type/Week/Daily/Date letterlijk, Mode = Type, DisplayID klein volgnummer
@@ -69,6 +76,11 @@ class NepAkuvox:
                     self.schemas[it["ID"]].update(velden)
                 elif actie == "del":
                     del self.schemas[it["ID"]]
+                    if self.herschik:
+                        eigen = sorted((x for x in self.schemas.values() if x.get("Source") == "Local" and x["DisplayID"] not in ("1001", "1002")),
+                                       key=lambda x: int(x["ID"]))
+                        for i, x in enumerate(eigen, 1):
+                            x["DisplayID"] = str(i)
             return AiohttpClientMockResponse(method, url, json={"retcode": 0, "message": "OK", "data": {"num": 1, "item": antw if actie == "add" else []}})
         for it in data["data"]["item"]:
             if actie == "add":
@@ -139,7 +151,7 @@ async def test_akuvox_sync(hass, aioclient_mock, hass_client_no_auth, hass_ws_cl
     v = await ak.async_sync()
     assert not any(v[k] for k in ("toegevoegd", "gewijzigd", "gewist", "fouten"))
     reg.bijwerken("test", jan["id"], schema=[{"dagen": [5], "van": "22:00", "tot": "06:00"}])
-    reg.geldigheid("test", jan["id"], valid_until="2099-12-31T18:00:00+01:00")
+    reg.geldigheid("test", jan["id"], valid_until="2099-12-31T23:59:00+01:00")
     v = await ak.async_sync()
     assert not v["fouten"], v
     eigen_s = sorted((x for x in nep.schemas.values() if x["Name"].startswith("BTX ")), key=lambda x: x["Daily"])
@@ -247,3 +259,48 @@ async def test_akuvox_schema_proef(hass, aioclient_mock):
                                        blocking=True, return_response=True)
     assert r["varianten"]["1"]["verstuurd"]["Name"] == "BTX proef 1" and r["gebruiker"] is None
     assert r["opgeruimd"] == 1 and sorted(nep.schemas) == ["1", "2"] and nep.users == users_voor
+    # v0.15.1: volgorde meten (DisplayID's en schedule/set), toestel blijft zoals het was
+    r = await hass.services.async_call(DOMAIN, "akuvox_schema_proef", {"volgorde": True}, blocking=True, return_response=True)
+    assert len(r["1_na_A_B_C"]) == 3 and len(r["3_na_wissen_A"]) == 2 and len(r["4_na_D"]) == 3 and r["5_opgeruimd"]
+    assert r["2_na_set_B"]["BTX proef B"]["Week"] == "06"
+    assert sorted(nep.schemas) == ["1", "2"] and nep.users == users_voor
+
+
+def test_schema_items_randgevallen():
+    """v0.15.1: weekdagen, middernacht, 24 uur, en een einduur dat het toestel ook zonder HA exact moet respecteren."""
+    from custom_components.btechnics_toegang.akuvox import Akuvox
+    oud = dt_util.get_default_time_zone()
+    dt_util.set_default_time_zone(dt_util.get_time_zone("Europe/Brussels"))
+    try:
+        _randgevallen(Akuvox.schema_items)
+    finally:
+        dt_util.set_default_time_zone(oud)
+
+
+def _randgevallen(si):
+    assert si({}) == []
+    # zondag = 0, maandag = 1
+    assert si({"schema": [{"dagen": [7, 1], "van": "08:00", "tot": "17:00"}]}) == [{"Type": "1", "Week": "01", "Daily": "08:00-17:00"}]
+    # over middernacht: vrijdag 22:00 tot zaterdag 06:00
+    assert si({"schema": [{"dagen": [5], "van": "22:00", "tot": "06:00"}]}) == [
+        {"Type": "1", "Week": "5", "Daily": "22:00-23:59"}, {"Type": "1", "Week": "6", "Daily": "00:00-06:00"}]
+    # 24 uur vanaf 00:00 = enkel de startdag; 24 uur vanaf 08:00 = tot 08:00 de dag erna
+    assert si({"schema": [{"dagen": [1], "van": "00:00", "tot": "00:00"}]}) == [{"Type": "1", "Week": "1", "Daily": "00:00-23:59"}]
+    assert si({"schema": [{"dagen": [1], "van": "08:00", "tot": "08:00"}]}) == [
+        {"Type": "1", "Week": "1", "Daily": "08:00-23:59"}, {"Type": "1", "Week": "2", "Daily": "00:00-08:00"}]
+    # einddatum om 23:59: gewoon bereik
+    assert si({"valid_until": "2026-11-04T23:59:00+01:00"}) == [{"Type": "0", "Week": "0123456", "Daily": "00:00-23:59", "Date": "00000000-20261104"}]
+    # einduur 14:00 op woensdag 4/11: bereik tot dinsdag, woensdag apart tot 14:00
+    assert si({"valid_until": "2026-11-04T14:00:00+01:00"}) == [
+        {"Type": "0", "Week": "0123456", "Daily": "00:00-23:59", "Date": "00000000-20261103"},
+        {"Type": "0", "Week": "3", "Daily": "00:00-14:00", "Date": "20261104-20261104"}]
+    # met uren: blok 08-17 op werkdagen, einde woensdag 12:00 -> woensdag 08-12; blok na het einduur valt weg
+    assert si({"schema": [{"dagen": [1, 2, 3, 4, 5], "van": "08:00", "tot": "17:00"}, {"dagen": [3], "van": "13:00", "tot": "15:00"}],
+               "valid_until": "2026-11-04T12:00:00+01:00"}) == [
+        {"Type": "0", "Week": "12345", "Daily": "08:00-17:00", "Date": "00000000-20261103"},
+        {"Type": "0", "Week": "3", "Daily": "13:00-15:00", "Date": "00000000-20261103"},
+        {"Type": "0", "Week": "3", "Daily": "08:00-12:00", "Date": "20261104-20261104"}]
+    # UTC tijd wordt lokale tijd (Brussel): 2026-11-04T22:30Z = 23:30 lokaal
+    assert si({"valid_until": "2026-11-04T22:59:00+00:00"})[0]["Date"] == "00000000-20261104"
+    # einde om 00:00: niets meer over op de laatste dag
+    assert si({"valid_until": "2026-11-04T00:00:00+01:00"}) == [{"Type": "0", "Week": "0123456", "Daily": "00:00-23:59", "Date": "00000000-20261103"}]

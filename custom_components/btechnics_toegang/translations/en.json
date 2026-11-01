@@ -419,6 +419,10 @@
         "gebruiker": {
           "name": "Test user",
           "description": "Link temporary user 799990 to the first schedule"
+        },
+        "volgorde": {
+          "name": "Measure order",
+          "description": "Measure DisplayIDs on delete/add and schedule/set"
         }
       }
     }
