@@ -368,7 +368,7 @@ class Akuvox:
                 break
         return list(uit.values())
 
-    async def async_schema_proef(self) -> dict:
+    async def async_schema_proef(self, items: list[dict] | None = None, gebruiker: bool = True) -> dict:
         """v0.14.3 proef: welk schemaformaat aanvaardt dit toestel? Zet tijdelijke schema's met naam 'BTX proef',
         leest ze terug, koppelt er een tijdelijke eigen gebruiker 799990 aan, leest die terug en ruimt alles weer op.
         Raakt niets anders aan: wissen enkel op ID van items met die naam."""
@@ -380,6 +380,10 @@ class Akuvox:
             "B": {"Name": PROEF + " B", "Type": "1", **dagen, "Thu": "1", "Thur": "1", "DateStart": "2026-11-02", "DateEnd": "2026-12-31",
                   "TimeStart": "08:00:00", "TimeEnd": "17:00:00"},
         }
+        if items:
+            # v0.14.4: varianten via de dienst; naam altijd 'BTX proef n' zodat opruimen enkel die raakt
+            varianten = {str(i + 1): {**{k: str(v) for k, v in it.items() if k not in ("ID", "DisplayID", "Name")}, "Name": f"{PROEF} {i + 1}"}
+                         for i, it in enumerate(items[:6])}
         verslag: dict[str, Any] = {"voor": [], "varianten": {}, "gebruiker": None, "na": []}
 
         async def opruimen() -> list:
@@ -404,7 +408,7 @@ class Akuvox:
                 verslag["varianten"][naam] = r
             # tijdelijke eigen gebruiker aan het eerste gelukte schema koppelen (code willekeurig, meteen weer weg)
             gelukt = next((v["teruggelezen"][0] for v in verslag["varianten"].values() if v["teruggelezen"]), None)
-            if gelukt:
+            if gelukt and gebruiker:
                 sid = str(gelukt.get("DisplayID") or gelukt.get("ID"))
                 bestaand = [u for u in await self.gebruikers() if str(u.get("UserID")) == "799990"]
                 if not bestaand:

@@ -411,6 +411,14 @@
         "toestel": {
           "name": "Device",
           "description": "1 or 2"
+        },
+        "items": {
+          "name": "Variants",
+          "description": "List of schedule items to try (name becomes BTX proef n)"
+        },
+        "gebruiker": {
+          "name": "Test user",
+          "description": "Link temporary user 799990 to the first schedule"
         }
       }
     }

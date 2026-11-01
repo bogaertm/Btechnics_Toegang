@@ -411,6 +411,14 @@
         "toestel": {
           "name": "Toestel",
           "description": "1 of 2"
+        },
+        "items": {
+          "name": "Varianten",
+          "description": "Lijst van schema-items om te proberen (naam wordt BTX proef n)"
+        },
+        "gebruiker": {
+          "name": "Proefgebruiker",
+          "description": "Tijdelijke gebruiker 799990 aan het eerste schema koppelen"
         }
       }
     }

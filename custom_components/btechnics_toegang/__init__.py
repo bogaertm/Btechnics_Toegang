@@ -277,7 +277,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         from .akuvox import AkuvoxFout
         ak = _aks(call)[0]
         try:
-            return {"nr": ak.nr, **await ak.async_schema_proef()}
+            return {"nr": ak.nr, **await ak.async_schema_proef(call.data.get("items"), call.data.get("gebruiker", True))}
         except AkuvoxFout as e:
             raise HomeAssistantError(str(e)) from e
 
@@ -317,7 +317,9 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     dienst("akuvox_test", akuvox_test, vol.Schema({vol.Optional("toestel"): vol.In([1, 2])}), SupportsResponse.ONLY)
     dienst("testdeur_klaarzetten", testdeur_klaarzetten, vol.Schema({}), SupportsResponse.ONLY)
     dienst("testdeur_opruimen", testdeur_opruimen, vol.Schema({}), SupportsResponse.ONLY)
-    dienst("akuvox_schema_proef", akuvox_schema_proef, vol.Schema({vol.Optional("toestel"): vol.In([1, 2])}), SupportsResponse.ONLY)
+    dienst("akuvox_schema_proef", akuvox_schema_proef, vol.Schema({vol.Optional("toestel"): vol.In([1, 2]),
+                                                                   vol.Optional("items"): vol.All(cv.ensure_list, [dict], vol.Length(max=6)),
+                                                                   vol.Optional("gebruiker"): cv.boolean}), SupportsResponse.ONLY)
     dienst("akuvox_sync", akuvox_sync, vol.Schema({vol.Optional("toestel"): vol.In([1, 2])}), SupportsResponse.ONLY)
     # koppeling met Btechnics Work via Btechnics IOT (zie werk.py)
     dienst("werk", werk, vol.Schema({vol.Required("actie"): cv.string, vol.Optional("velden"): dict,

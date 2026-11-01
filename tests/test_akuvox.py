@@ -205,3 +205,8 @@ async def test_akuvox_schema_proef(hass, aioclient_mock):
     g = r["gebruiker"]
     assert g["teruggelezen"][0]["ScheduleRelay"] == g["schema"] + "-1;" and "PrivatePIN" not in g["teruggelezen"][0] and g["weg"]
     assert r["opgeruimd"] == 2 and sorted(nep.schemas) == ["1", "2"] and nep.users == users_voor
+    # v0.14.4: eigen varianten, naam wordt altijd BTX proef n, zonder proefgebruiker
+    r = await hass.services.async_call(DOMAIN, "akuvox_schema_proef", {"items": [{"Name": "Always", "Type": "1", "Week": "12345"}], "gebruiker": False},
+                                       blocking=True, return_response=True)
+    assert r["varianten"]["1"]["verstuurd"]["Name"] == "BTX proef 1" and r["gebruiker"] is None
+    assert r["opgeruimd"] == 1 and sorted(nep.schemas) == ["1", "2"] and nep.users == users_voor

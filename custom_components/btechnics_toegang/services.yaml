@@ -233,6 +233,14 @@ akuvox_test:
           max: 2
 akuvox_schema_proef:
   fields:
+    items:
+      required: false
+      selector:
+        object:
+    gebruiker:
+      required: false
+      selector:
+        boolean:
     toestel:
       required: false
       selector:
