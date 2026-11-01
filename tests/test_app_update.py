@@ -49,8 +49,25 @@ async def test_app_update(opgezet, hass_client):
     # zonder tabletsleutel niets
     assert (await client.get(f"{API}/apk")).status == 401
     # oudere versie wordt geweigerd
-    r = await beheer.post(f"{API}/apk_upload?version_code=60&versie=1.66&sha256={sha}", data=APK)
-    assert r.status == 409
+    r = await beheer.post(f"{API}/apk_upload?version_code=60&versie=1.66&sha256={sha}", data=APK[::-1])
+    assert r.status in (400, 409)
+    r = await beheer.post(f"{API}/apk_upload?version_code=60&versie=1.66&sha256={hashlib.sha256(APK[::-1]).hexdigest()}", data=APK[::-1])
+    assert r.status == 409 and await (await client.get(f"{API}/apk", headers=kop)).read() == APK
+    # v0.14.2: bij het aankondigen (tablets worden meteen verwittigd) staat het nieuwe bestand al klaar
+    from custom_components.btechnics_toegang.api import apk_pad
+    reg = hass.data[DOMAIN]["register"]
+    nieuw = APK + b"v67"
+    gezien = []
+    echt = reg.gewijzigd
+    def kijk(*a, **k):
+        with open(apk_pad(hass), "rb") as f:
+            gezien.append(f.read())
+        return echt(*a, **k)
+    reg.gewijzigd = kijk
+    r = await beheer.post(f"{API}/apk_upload?version_code=67&versie=1.73&sha256={hashlib.sha256(nieuw).hexdigest()}", data=nieuw)
+    reg.gewijzigd = echt
+    assert r.status == 200 and gezien == [nieuw]
+    assert await (await client.get(f"{API}/apk", headers=kop)).read() == nieuw
     # via de tunnel geweigerd
-    r = await beheer.post(f"{API}/apk_upload?version_code=67&versie=1.73&sha256={sha}", data=APK, headers={"Cf-Connecting-Ip": "1.2.3.4"})
+    r = await beheer.post(f"{API}/apk_upload?version_code=68&versie=1.74&sha256={sha}", data=APK, headers={"Cf-Connecting-Ip": "1.2.3.4"})
     assert r.status == 403

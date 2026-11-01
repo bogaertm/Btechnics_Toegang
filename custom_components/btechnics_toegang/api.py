@@ -325,6 +325,8 @@ class ApkView(_TabletView):
         pad = apk_pad(request.app[KEY_HASS])
         if not app or not os.path.isfile(pad):
             return _fout(HTTPStatus.NOT_FOUND, "geen update klaar")
+        if app.get("grootte") and await request.app[KEY_HASS].async_add_executor_job(os.path.getsize, pad) != app["grootte"]:
+            return _fout(HTTPStatus.SERVICE_UNAVAILABLE, "update wordt nog klaargezet")
         _LOGGER.info("Tablet %s haalt app %s", tablet["naam"], app.get("versie"))
         return web.FileResponse(pad, headers={"Content-Type": "application/vnd.android.package-archive"})
 
@@ -350,6 +352,9 @@ class ApkUploadView(HomeAssistantView):
         verwacht = request.query.get("sha256", "").lower()
         if len(verwacht) != 64:
             return _fout(HTTPStatus.BAD_REQUEST, "sha256 ontbreekt")
+        oud = (_reg(hass).data.get("app") or {}).get("version_code") or 0
+        if vc < oud:
+            return _fout(HTTPStatus.CONFLICT, f"versie {vc} is ouder dan {oud}")
         pad = apk_pad(hass)
         tmp = pad + ".tmp"
         await hass.async_add_executor_job(lambda: os.makedirs(os.path.dirname(pad), exist_ok=True))
@@ -371,12 +376,13 @@ class ApkUploadView(HomeAssistantView):
         if h.hexdigest() != verwacht or grootte < 1024:
             await hass.async_add_executor_job(os.remove, tmp)
             return _fout(HTTPStatus.BAD_REQUEST, "sha256 klopt niet met wat ontvangen werd")
+        # v0.14.2: eerst het bestand op zijn plaats, pas daarna aankondigen (apk_zetten verwittigt de tablets meteen;
+        # omgekeerd haalde de tablet nog het vorige bestand en weigerde hij terecht op de grootte)
+        await hass.async_add_executor_job(os.replace, tmp, pad)
         try:
             app = _reg(hass).apk_zetten(vc, versie, verwacht, grootte, os.path.basename(pad), wie=user.name or "")
         except ToegangFout as e:
-            await hass.async_add_executor_job(os.remove, tmp)
             return _fout(HTTPStatus.CONFLICT, str(e))
-        await hass.async_add_executor_job(os.replace, tmp, pad)
         return self.json({"ok": True, **{k: app[k] for k in ("version_code", "versie", "sha256", "grootte")}})
 
 
