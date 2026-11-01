@@ -60,7 +60,7 @@ class NepAkuvox:
         return AiohttpClientMockResponse(method, url, json={"retcode": 0, "message": "OK"})
 
 
-async def test_akuvox_sync(hass, aioclient_mock, hass_client_no_auth):
+async def test_akuvox_sync(hass, aioclient_mock, hass_client_no_auth, hass_ws_client):
     await hass.config.async_set_time_zone("Europe/Brussels")
     nep = NepAkuvox()
     aioclient_mock.get(f"https://{IP}/api/user/get", side_effect=nep.get)
@@ -158,3 +158,11 @@ async def test_akuvox_sync(hass, aioclient_mock, hass_client_no_auth):
     # diagnose (enkel lezen)
     t = await hass.services.async_call(DOMAIN, "akuvox_test", {}, blocking=True, return_response=True)
     assert t["toestel"]["boven_700000_niet_van_ons"] == ["700500"] and t["toestel"]["van_ons"] == 1
+    # v0.14.1: kaart van een Akuvox deur zonder tablets toont toestellen (S532) i.p.v. Tablets online 0/0
+    ws = await hass_ws_client(hass)
+    await ws.send_json({"id": 91, "type": f"{DOMAIN}/doors"})
+    r = await ws.receive_json()
+    d = [x for x in r["result"]["doors"] if x["id"] == voordeur["id"]][0]
+    assert d["devices"]["totaal"] == 1 and d["devices"]["namen"] == ["S532"] and d["devices"]["online"] in (0, 1)
+    b = [x for x in r["result"]["doors"] if x["name"] == "Binnen"][0]
+    assert b["devices"] is None

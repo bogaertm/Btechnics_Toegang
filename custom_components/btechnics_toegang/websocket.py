@@ -91,12 +91,18 @@ async def ws_doors(hass, connection, msg):
     for d in sorted(reg.data["deuren"].values(), key=lambda x: x["naam"].lower()):
         tabs = [t for t in reg.data["tablets"].values() if t["deur_id"] == d["id"] and t.get("soort") != "server"]
         online = [t for t in tabs if reg.tablet_online(t, OFFLINE_NA)]
+        # Akuvox deur zonder tablet: de kaart toont de toestellen (S532 en gezichtsserver) in plaats van "Tablets online 0/0"
+        servers = [t for t in reg.data["tablets"].values() if t["deur_id"] == d["id"] and t.get("soort") == "server"]
+        toestellen = None
+        if not tabs and _akuvox_deur(hass, d["id"]):
+            toestellen = {"online": int(_akuvox_ok(hass, d["id"])) + sum(1 for s in servers if reg.tablet_online(s, OFFLINE_NA)),
+                          "totaal": 1 + len(servers), "namen": ["S532"] + ["gezichtsserver" for _ in servers]}
         recent = tg.recent.get(d["id"], [])
         doors.append({
             "id": d["id"], "name": d["naam"], "available": bool(online) or _akuvox_ok(hass, d["id"]),
             "last_unlock": recent[0] if recent else None, "recent": recent[:10],
             "codes": sum(1 for p in reg.data["personen"].values() if p["status"] == "active" and d["id"] in p["deuren"]),
-            "cards": len(online), "tablets": len(tabs), "modus": d["modus"], "can_open": bool(d.get("open_entiteit")) or _akuvox_deur(hass, d["id"]),
+            "cards": len(online), "tablets": len(tabs), "devices": toestellen, "modus": d["modus"], "can_open": bool(d.get("open_entiteit")) or _akuvox_deur(hass, d["id"]),
             "today": today.get(d["id"], {"opened": 0, "refused": 0}),
             "entities": {"last_unlock": ent.async_get_entity_id("sensor", DOMAIN, f"{d['id']}_laatste")},
         })

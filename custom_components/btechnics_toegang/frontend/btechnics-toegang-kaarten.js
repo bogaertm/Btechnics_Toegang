@@ -573,14 +573,15 @@ class VtoOverzicht extends VtoBase {
       : `<ha-icon icon="mdi:camera-off-outline" title="Geen foto"></ha-icon>`}</div>`;
     return `<div class="door">
       <div class="head"><span class="name">${esc(d.name)}</span>
-        <span class="chip ${d.available ? "" : "off"}">${d.available ? "Online" : d.tablets ? "Offline" : "Geen tablet"}</span></div>
+        <span class="chip ${d.available ? "" : "off"}">${d.available ? "Online" : d.tablets || d.devices ? "Offline" : "Geen tablet"}</span></div>
       <div class="last"><div class="icon ${cls}"><ha-icon icon="${icon}"></ha-icon></div>
         <div class="txt" data-txt title="${esc(full)}"><div class="who line">${esc(who)}</div><div class="muted line">${esc(line1)}</div><div class="muted line">${esc(line2) || "&nbsp;"}</div></div>${thumb}</div>
       <div class="stats">
         <div class="stat"><div class="v">${d.today.opened}</div><div class="l">Vandaag geopend</div></div>
         <div class="stat"><div class="v">${d.today.refused}</div><div class="l">Vandaag geweigerd</div></div>
         <div class="stat"><div class="v">${d.codes}</div><div class="l">Codes</div></div>
-        <div class="stat"><div class="v">${d.cards}/${d.tablets}</div><div class="l">Tablets online</div></div>
+        ${d.devices ? `<div class="stat" title="${esc(d.devices.namen.join(" en "))}"><div class="v">${d.devices.online}/${d.devices.totaal}</div><div class="l">Toestellen online</div></div>`
+          : `<div class="stat"><div class="v">${d.cards}/${d.tablets}</div><div class="l">Tablets online</div></div>`}
       </div>
       ${isAdmin(this._hass) ? `<div class="opener"><button class="btn" data-open="${esc(d.id)}" data-name="${esc(d.name)}" ${d.can_open ? "" : "disabled title=\"Kies eerst in Deuren waarmee deze deur opent\""}>
         <ha-icon icon="mdi:door-open" style="--mdc-icon-size:18px"></ha-icon> Deur openen</button><span class="omsg" data-omsg="${esc(d.id)}"></span></div>` : ""}
