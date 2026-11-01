@@ -502,8 +502,8 @@ class Akuvox:
                                                   and u not in van_ons))
         self.reg._bewaar()  # noqa: SLF001  enkel opslag, de tabletlijst verandert hier niet
         if fout and fout != staat.get("laatste_fout") and not verslag.get("_opnieuw"):
-            from homeassistant.components import persistent_notification
-            persistent_notification.async_create(
+            from .melding import alarm
+            alarm(
                 self.hass, f"De Akuvox ({self.ip}) staat niet zoals HA het wil: {fout}",
                 title="Btechnics Toegang: Akuvox klopt niet", notification_id=f"btechnics_toegang_akuvox{self.nr}")
             _LOGGER.error("Akuvox %s: %s", self.nr, fout)
@@ -572,11 +572,11 @@ class Akuvox:
             buiten = bool(p) and self._buiten(p, t)
             if pid and gelukt and laatste and (not p or p.get("status") != "active" or self.deur_id not in p.get("deuren", []) or buiten):
                 # het toestel liet iemand binnen die volgens HA geen toegang had: altijd melden
-                from homeassistant.components import persistent_notification
+                from .melding import alarm
                 waarom = ("niet meer gekend" if not p else "niet actief" if p.get("status") != "active"
                           else "geen recht op deze deur" if self.deur_id not in p.get("deuren", []) else "buiten de uren of datums")
                 melding = f"De Akuvox liet {naam or pid} binnen om {tijd}, terwijl die volgens HA geen toegang had ({waarom}). HA zet het toestel opnieuw recht."
-                persistent_notification.async_create(self.hass, melding, title="Btechnics Toegang: Akuvox liet iemand binnen",
+                alarm(self.hass, melding, title="Btechnics Toegang: Akuvox liet iemand binnen",
                                                      notification_id=f"btechnics_toegang_akuvox{self.nr}_binnen")
                 _LOGGER.error("Akuvox %s: %s", self.nr, melding)
                 self.status.update(ok=False, fout=f"toestel liet {naam or pid} binnen om {tijd} zonder recht")
@@ -587,10 +587,10 @@ class Akuvox:
                 pass   # buiten de uren of datums: het toestel weigert terecht (schema op de S532)
             elif pid and not gelukt and laatste:
                 # het toestel herkende onze gebruiker (juiste code) maar weigerde: rechten op het toestel kloppen niet
-                from homeassistant.components import persistent_notification
+                from .melding import alarm
                 melding = (f"De Akuvox weigerde {naam or pid} ({x.get('Type', '')}) om {tijd}, hoewel het toestel de gebruiker herkende. "
                            "De toegangsrechten op het toestel kloppen niet; HA zet ze opnieuw.")
-                persistent_notification.async_create(self.hass, melding, title="Btechnics Toegang: Akuvox weigert eigen gebruiker",
+                alarm(self.hass, melding, title="Btechnics Toegang: Akuvox weigert eigen gebruiker",
                                                      notification_id=f"btechnics_toegang_akuvox{self.nr}_weigert")
                 _LOGGER.error("Akuvox %s: %s", self.nr, melding)
                 self.status.update(ok=False, fout=f"toestel weigerde {naam or pid} om {tijd}")

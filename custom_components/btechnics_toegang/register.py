@@ -849,8 +849,8 @@ class Register:
         if t.get("pubkey") and not bij_koppelen:
             if (t.get("pubkey_wacht") or {}).get("pubkey_id") != kid:
                 t["pubkey_wacht"] = {"pubkey": der, "pubkey_id": kid, "sinds": _iso(_nu())}
-                from homeassistant.components import persistent_notification
-                persistent_notification.async_create(
+                from .melding import alarm
+                alarm(
                     self.hass, f"{'Gezichtsserver' if t.get('soort') == 'server' else 'Tablet'} **{t['naam']}** stuurt een nieuwe sleutel "
                     f"(begint met {kid[:16]}). Keur die enkel goed als je het toestel zelf opnieuw instelde: Deuren, Sleutel goedkeuren.",
                     title="Btechnics Toegang: nieuwe toestelsleutel", notification_id=f"{DOMAIN}_sleutel_{t['id']}")
@@ -1182,8 +1182,8 @@ class Register:
         except ToegangFout:
             p["pin_pogingen"] = pogingen + [nu]
             if len(p["pin_pogingen"]) >= self.PIN_POGINGEN_MAX:
-                from homeassistant.components import persistent_notification
-                persistent_notification.async_create(
+                from .melding import alarm
+                alarm(
                     self.hass, f"**{p['naam']}** probeerde in het portaal {self.PIN_POGINGEN_MAX} keer een code die niet kan. "
                     "Nieuwe codes kiezen is een uur geblokkeerd.", title="Btechnics Toegang: portaal",
                     notification_id=f"{DOMAIN}_pinpogingen_{p['id']}")

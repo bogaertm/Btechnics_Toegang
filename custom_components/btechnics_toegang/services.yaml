@@ -338,3 +338,15 @@ uitnodiging_maken:
         number:
           min: 1
           max: 30
+gsm_melding:
+  fields:
+    doel:
+      required: false
+      example: mobile_app_boogie_phone
+      selector:
+        text:
+    test:
+      required: false
+      selector:
+        boolean:
+controle: {}

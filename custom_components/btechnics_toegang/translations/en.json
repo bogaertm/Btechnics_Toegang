@@ -425,6 +425,24 @@
           "description": "Measure DisplayIDs on delete/add and schedule/set"
         }
       }
+    },
+    "gsm_melding": {
+      "name": "Phone alerts",
+      "description": "Also send door access alarms as phone notifications, and a test.",
+      "fields": {
+        "doel": {
+          "name": "Target",
+          "description": "notify service, e.g. mobile_app_boogie_phone; empty = HA only"
+        },
+        "test": {
+          "name": "Test",
+          "description": "Send a test notification now"
+        }
+      }
+    },
+    "controle": {
+      "name": "Self check",
+      "description": "Run the door access self check now (also daily at 07:45)."
     }
   },
   "options": {
@@ -444,7 +462,8 @@
           "akuvox2_ip": "Device 2: IP address",
           "akuvox2_gebruiker": "Device 2: HTTP API user",
           "akuvox2_wachtwoord": "Device 2: HTTP API password",
-          "akuvox2_deur": "Device 2: door in HA"
+          "akuvox2_deur": "Device 2: door in HA",
+          "gsm_melding": "Alarms to phone"
         }
       }
     },

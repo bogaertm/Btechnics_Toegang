@@ -287,6 +287,26 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         except AkuvoxFout as e:
             raise HomeAssistantError(str(e)) from e
 
+    async def gsm_melding(call: ServiceCall) -> ServiceResponse:
+        """v0.15.3: gsm-melding voor alarmen instellen ("" = enkel in HA) en/of een proefmelding sturen."""
+        from .melding import alarm, gsm_doel
+        entry = _data(hass).get("entry")
+        if "doel" in call.data and entry is not None:
+            doel = str(call.data["doel"] or "").strip().removeprefix("notify.")
+            if doel and not hass.services.has_service("notify", doel):
+                raise HomeAssistantError(f"notify.{doel} bestaat niet")
+            hass.config_entries.async_update_entry(entry, options={**entry.options, "gsm_melding": doel})
+        if call.data.get("test"):
+            alarm(hass, "Proefmelding: zo komen alarmen van de deurtoegang binnen (ook in HA bij de meldingen).",
+                  title="Btechnics Toegang: proefmelding", notification_id=f"{DOMAIN}_proefmelding")
+        return {"gsm_melding": gsm_doel(hass) or None}
+
+    async def controle(call: ServiceCall) -> ServiceResponse:
+        """v0.15.3: de dagelijkse zelfcontrole nu uitvoeren (stuurt een alarm als er iets mis is)."""
+        from .controle import async_dagcontrole
+        fout = await async_dagcontrole(hass)
+        return {"ok": not fout, "fouten": fout}
+
     async def akuvox_sync(call: ServiceCall) -> ServiceResponse:
         alle = [{"nr": ak.nr, "verslag": await ak.async_sync(), "status": ak.status} for ak in _aks(call) if ak.aan]
         if not alle:
@@ -327,6 +347,9 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                                                                    vol.Optional("items"): vol.All(cv.ensure_list, [dict], vol.Length(max=6)),
                                                                    vol.Optional("gebruiker"): cv.boolean,
                                                                    vol.Optional("volgorde"): cv.boolean}), SupportsResponse.ONLY)
+    dienst("controle", controle, vol.Schema({}), SupportsResponse.ONLY)
+    dienst("gsm_melding", gsm_melding, vol.Schema({vol.Optional("doel"): vol.Any("", cv.string), vol.Optional("test"): cv.boolean}),
+           SupportsResponse.OPTIONAL)
     dienst("akuvox_sync", akuvox_sync, vol.Schema({vol.Optional("toestel"): vol.In([1, 2])}), SupportsResponse.ONLY)
     # koppeling met Btechnics Work via Btechnics IOT (zie werk.py)
     dienst("werk", werk, vol.Schema({vol.Required("actie"): cv.string, vol.Optional("velden"): dict,
@@ -544,6 +567,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     entry.async_on_unload(async_track_time_interval(hass, _planner, timedelta(minutes=1)))
     entry.async_on_unload(async_track_time_interval(hass, _akuvox_log, timedelta(seconds=5)))
     entry.async_on_unload(async_track_time_interval(hass, _opruimen, timedelta(hours=12)))
+    # v0.15.3: zelfcontrole (elke dag 07:45) en bewaking van toestellen die offline gaan (elke 5 min)
+    from homeassistant.helpers.event import async_track_time_change
+    from .controle import async_dagcontrole, async_offline_bewaking
+    async def _dagcontrole(now=None):
+        await async_dagcontrole(hass, now)
+
+    async def _offline(now=None):
+        await async_offline_bewaking(hass, now)
+
+    entry.async_on_unload(async_track_time_change(hass, _dagcontrole, hour=7, minute=45, second=0))
+    entry.async_on_unload(async_track_time_interval(hass, _offline, timedelta(minutes=5)))
     await _planner()
     hass.async_create_task(_opruimen())
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)

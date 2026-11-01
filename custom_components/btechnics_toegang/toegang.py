@@ -151,10 +151,10 @@ class Toegang:
 
     def _melding_foto(self, tablet: dict, deur: dict, regel: dict) -> None:
         """Echtheidscontrole van de tablet: iemand probeerde met een foto of scherm binnen te geraken."""
-        from homeassistant.components import persistent_notification
+        from .melding import alarm
         p = self.reg.data["personen"].get(regel.get("persoon_id") or "")
         wie = p["naam"] if p else "een onbekend gezicht"
-        persistent_notification.async_create(
+        alarm(
             self.hass, f"Tablet **{tablet['naam']}** ({deur.get('naam', '')}) weigerde een gezicht dat op een foto of scherm leek: "
             f"{wie}{', score ' + str(regel['score']) if 'score' in regel else ''}. Het gezicht van die persoon is 5 minuten "
             "geblokkeerd op die tablet; de code blijft werken.",
@@ -181,8 +181,8 @@ class Toegang:
         if not deur:
             return
         tot = self.reg.klavier_blokkeren(deur_id, POGING_BLOK)
-        from homeassistant.components import persistent_notification
-        persistent_notification.async_create(
+        from .melding import alarm
+        alarm(
             self.hass, f"Deur **{deur['naam']}**: {len(lijst)} foute codes of badges binnen {POGING_VENSTER // 60} minuten. "
             f"Het klavier van de tablet is {POGING_BLOK} seconden geblokkeerd (tot {tot[11:16]}).",
             title="Btechnics Toegang: te veel foute pogingen", notification_id=f"{DOMAIN}_pogingen_{deur_id}")

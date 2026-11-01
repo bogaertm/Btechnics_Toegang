@@ -425,6 +425,24 @@
           "description": "DisplayID's bij wissen en toevoegen, en schedule/set meten"
         }
       }
+    },
+    "gsm_melding": {
+      "name": "Gsm-melding alarmen",
+      "description": "Alarmen van de deurtoegang ook als gsm-melding sturen, en een proefmelding.",
+      "fields": {
+        "doel": {
+          "name": "Doel",
+          "description": "notify dienst, bv. mobile_app_boogie_phone; leeg = enkel in HA"
+        },
+        "test": {
+          "name": "Proefmelding",
+          "description": "Nu een proefmelding sturen"
+        }
+      }
+    },
+    "controle": {
+      "name": "Zelfcontrole",
+      "description": "Controle van Akuvox, tablets en gezichtsserver nu uitvoeren (ook elke dag om 07:45)."
     }
   },
   "options": {
@@ -444,7 +462,8 @@
           "akuvox2_ip": "Toestel 2: IP adres",
           "akuvox2_gebruiker": "Toestel 2: gebruiker HTTP API",
           "akuvox2_wachtwoord": "Toestel 2: wachtwoord HTTP API",
-          "akuvox2_deur": "Toestel 2: deur in HA"
+          "akuvox2_deur": "Toestel 2: deur in HA",
+          "gsm_melding": "Alarmen ook naar gsm"
         }
       }
     },

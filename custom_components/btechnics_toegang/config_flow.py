@@ -90,6 +90,11 @@ class ToegangOpties(OptionsFlow):
         velden.update({
             vol.Optional("https_poort", default=int(o.get("https_poort") or 8443)): vol.All(vol.Coerce(int), vol.Range(min=1024, max=65535)),
             vol.Optional("enkel_https", default=bool(o.get("enkel_https"))): bool,
+            # v0.15.3: alarmen ook als gsm-melding (notify dienst); leeg = enkel in HA
+            vol.Optional("gsm_melding", default=o.get("gsm_melding") or ""): SelectSelector(SelectSelectorConfig(
+                options=[{"value": "", "label": "Enkel in Home Assistant"}] + [
+                    {"value": n, "label": n} for n in sorted(self.hass.services.async_services().get("notify", {}))
+                    if n.startswith("mobile_app_")], mode=SelectSelectorMode.DROPDOWN)),
         })
         ww = lambda k: "ingesteld" if o.get(k) else "nog niet ingesteld"  # noqa: E731
         return self.async_show_form(step_id="init", data_schema=vol.Schema(velden), errors=fouten,

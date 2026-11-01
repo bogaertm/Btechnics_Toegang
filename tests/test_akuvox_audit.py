@@ -230,3 +230,73 @@ async def test_binnengelaten_zonder_recht_geeft_alarm(hass, aioclient_mock):
     from homeassistant.components import persistent_notification
     titels = [n.get("title") or "" for n in persistent_notification._async_get_or_create_notifications(hass).values()]
     assert any("liet iemand binnen" in t for t in titels) and ak.status["ok"] is False
+
+
+async def test_alarmen_gaan_naar_gsm_en_ha(hass, aioclient_mock):
+    """v0.15.3: S532 weigert iemand binnen de uren, of laat iemand zonder recht binnen: melding in HA EN op de gsm."""
+    from pytest_homeassistant_custom_component.common import async_mock_service
+    gsm = async_mock_service(hass, "notify", "mobile_app_test")
+    nep = NepAkuvox()
+    reg, ak, deur = await _opzet(hass, aioclient_mock, nep)
+    r = await hass.services.async_call(DOMAIN, "gsm_melding", {"doel": "notify.mobile_app_test", "test": True}, blocking=True, return_response=True)
+    await hass.async_block_till_done()
+    assert r["gsm_melding"] == "mobile_app_test" and len(gsm) == 1
+    ak = hass.data[DOMAIN]["akuvox"]
+    jan = reg.toevoegen("test", naam="Jan Peeters", pin="583920", deuren=[deur["id"]])
+    await ak.async_sync()
+    nu = dt_util.now()
+    regel = lambda i, st: {"ID": str(i), "Date": nu.strftime("%Y-%m-%d"), "Time": nu.strftime("%H:%M:%S"), "Name": "Jan Peeters",
+                           "UserID": "700001", "Type": "PIN", "Status": st}
+    nep.log = [{**regel(10, "Succ"), "UserID": "1", "Name": "x"}]
+    await ak.async_deurlog()
+    nep.log.append(regel(11, "Failed"))            # binnen de uren geweigerd
+    await ak.async_deurlog()
+    await hass.async_block_till_done()
+    assert len(gsm) == 2 and "weigert" in gsm[-1].data["title"].lower()
+    nep.user_del_fout = True
+    reg.blokkeren("test", jan["id"])
+    await ak.async_sync()
+    nep.log.append(regel(12, "Succ"))              # geblokkeerd maar toch binnen
+    await ak.async_deurlog()
+    await hass.async_block_till_done()
+    assert len(gsm) >= 3 and any("binnen" in c.data["title"].lower() for c in gsm)
+    from homeassistant.components import persistent_notification
+    titels = [n.get("title") or "" for n in persistent_notification._async_get_or_create_notifications(hass).values()]
+    assert any("liet iemand binnen" in t for t in titels) and any("weigert" in t for t in titels)
+    # leeg = enkel in HA
+    await hass.services.async_call(DOMAIN, "gsm_melding", {"doel": ""}, blocking=True, return_response=True)
+    await hass.async_block_till_done()
+    voor = len(gsm)
+    await hass.services.async_call(DOMAIN, "gsm_melding", {"test": True}, blocking=True, return_response=True)
+    await hass.async_block_till_done()
+    assert len(gsm) == voor
+
+
+async def test_zelfcontrole_en_offline_alarm(hass, aioclient_mock):
+    """v0.15.3: dagelijkse zelfcontrole meldt problemen; een toestel langer dan 30 min offline geeft één alarm."""
+    import time
+    from pytest_homeassistant_custom_component.common import async_mock_service
+    from custom_components.btechnics_toegang.controle import async_offline_bewaking, zelfcontrole
+    gsm = async_mock_service(hass, "notify", "mobile_app_test")
+    nep = NepAkuvox()
+    reg, ak, deur = await _opzet(hass, aioclient_mock, nep)
+    await hass.services.async_call(DOMAIN, "gsm_melding", {"doel": "mobile_app_test"}, blocking=True, return_response=True)
+    await hass.async_block_till_done()
+    ak = hass.data[DOMAIN]["akuvox"]
+    await ak.async_sync()
+    r = await hass.services.async_call(DOMAIN, "controle", {}, blocking=True, return_response=True)
+    assert r["ok"] is True and r["fouten"] == []
+    # nep tablet die al lang geen contact had
+    reg.data["tablets"]["t_x"] = {"id": "t_x", "naam": "Testtablet", "deur_id": deur["id"], "laatst_mono": time.monotonic() - 3600}
+    assert any("Testtablet is offline" in f for f in zelfcontrole(hass))
+    hass.data[DOMAIN]["bewaking_sinds"] = time.monotonic() - 4000
+    await async_offline_bewaking(hass)
+    await async_offline_bewaking(hass)   # tweede keer: geen tweede alarm
+    await hass.async_block_till_done()
+    assert sum(1 for c in gsm if "offline" in c.data["title"].lower()) == 1
+    reg.data["tablets"]["t_x"]["laatst_mono"] = time.monotonic()
+    await async_offline_bewaking(hass)
+    from homeassistant.components import persistent_notification
+    titels = [n.get("title") or "" for n in persistent_notification._async_get_or_create_notifications(hass).values()]
+    assert any("terug online" in t for t in titels) and not any(t.endswith("toestel offline") for t in titels)
+    del reg.data["tablets"]["t_x"]
